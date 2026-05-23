@@ -1,0 +1,28 @@
+# Session exports
+chat_session.json
+*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# Data files (large / potentially sensitive)
+data/
+*.xlsx
+*.parquet
+*.duckdb
+
+# Output
+output/
+parquet_cache/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# OS
+desktop.ini
+.DS_Store
+Thumbs.db

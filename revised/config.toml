@@ -1,0 +1,150 @@
+## Centralized configuration for Model Convergence & Outlook RWA pipelines
+## Paths use environment-variable overrides so each analyst only needs to set
+## OUTLOOK_RWA_DATA_DIR and OUTLOOK_RWA_APP_DIR — no edits to this file.
+
+[global_params]
+QO     = "Dec_2025"
+period = "may2026"
+run_id = "20may2026_1530"   # single source of truth for the run stamp
+
+# Override these via environment variables (OUTLOOK_RWA_DATA_DIR, etc.)
+# or update only the two root paths below; all derived paths are built in code.
+data_dir              = "${OUTLOOK_RWA_DATA_DIR}/may2026"
+input_dir             = "${OUTLOOK_RWA_DATA_DIR}/may2026/Input"
+output_dir            = "${OUTLOOK_RWA_DATA_DIR}/may2026/output/run_${run_id}"
+model_convergence_dir = "${OUTLOOK_RWA_DATA_DIR}/may2026/output/run_${run_id}"
+duckdb_path           = "${OUTLOOK_RWA_DATA_DIR}/may2026/input/outlook_rwa_pipeline.duckdb"
+schema_registry_path  = "${OUTLOOK_RWA_APP_DIR}/src/main/tools/schema_registry.csv"
+
+## Step 1 inputs (manifest style)
+## Each entry drives both the parallel Excel → Parquet conversion and
+## the parquet → pandas load. Adding a new file = one new [[inputs.step1]] block.
+[inputs]
+
+[[inputs.step1]]
+variable_name = "cg_balancesheet"
+logical_name  = "cg_balancesheet"
+filename      = "outlook_balancesheet_cg.xlsx"
+schema_key    = "balancesheet"
+entity        = "CG"
+stage         = "step1"
+
+[[inputs.step1]]
+variable_name = "cbna_balancesheet"
+logical_name  = "cbna_balancesheet"
+filename      = "outlook_balancesheet_cbna.xlsx"
+schema_key    = "balancesheet"
+entity        = "CBNA"
+stage         = "step1"
+
+[[inputs.step1]]
+variable_name = "convergence"
+logical_name  = "convergence"
+filename      = "aggregator_for_convergence.xlsx"
+schema_key    = "convergence"
+stage         = "step1"
+
+[[inputs.step2]]
+logical_name = "pug_mapping"
+filename     = "pug_mapping.xlsx"
+schema_key   = "pug_mapping"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "pmit_rwa_mapping"
+filename     = "pmit_rwa_mapping.xlsx"
+schema_key   = "pmit_rwa_mapping"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "cg_outlook"
+filename     = "cg_outlook.run_${run_id}.xlsx"
+schema_key   = "cg_outlook"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "cbna_outlook"
+filename     = "cbna_outlook.run_${run_id}.xlsx"
+schema_key   = "cbna_outlook"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "cg_addon"
+filename     = "addon_all_cg.run_${run_id}.xlsx"
+schema_key   = "cg_addon"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "cbna_addon"
+filename     = "addon_all_cbna.run_${run_id}.xlsx"
+schema_key   = "cbna_addon"
+stage        = "step2"
+
+# outputs
+[outputs]
+
+[outputs.step1]
+cg_outlook                   = "cg_outlook.run_${run_id}.xlsx"
+cbna_outlook                 = "cbna_outlook.run_${run_id}.xlsx"
+addon_non_waterfall_rwa      = "addon_all_cg.run_${run_id}.xlsx"
+cbna_addon_non_waterfall_rwa = "addon_all_cbna.run_${run_id}.xlsx"
+
+[outputs.step2]
+cg_upload_full   = "CG_Upload_Template_Full.run_${run_id}.xlsx"
+cbna_upload_full = "CBNA_Upload_Template_Full.run_${run_id}.xlsx"
+cg_raw_data      = "CG_RAW_DATA.run_${run_id}.xlsx"
+cbna_raw_data    = "CBNA_RAW_DATA.run_${run_id}.xlsx"
+control_file     = "control_file.run_${run_id}.xlsx"
+
+# ---------------------------------------------------------------------------
+# RWF Keys — waterfall join from most to least granular
+#
+# Each [[rwf_keys.key]] block defines one join key as a comma-separated list
+# of column names. Keys are tried in order; the first non-null match wins.
+# To tighten: add columns. To loosen: remove geography/segment columns.
+# See dynamic_rwf_keys.md for the full rationale.
+# ---------------------------------------------------------------------------
+[rwf_keys]
+
+[[rwf_keys.key]]
+label  = "Key1 — Sgmt L4 + Geo L4"
+index  = ["Quarter Id", "Managed Segment Level 4 Code",
+          "Managed Geography Level 4 Description",
+          "Finance PMF Level 5 Description",
+          "Managed Segment Level 2 Description"]
+
+[[rwf_keys.key]]
+label  = "Key2 — Sgmt L3 + Geo L4"
+index  = ["Quarter Id", "Managed Segment Level 3 Code",
+          "Managed Geography Level 4 Description",
+          "Finance PMF Level 5 Description",
+          "Managed Segment Level 2 Description"]
+
+[[rwf_keys.key]]
+label  = "Key3 — Sgmt L2 + Geo L4"
+index  = ["Quarter Id", "Managed Segment Level 2 Code",
+          "Managed Geography Level 4 Description",
+          "Finance PMF Level 5 Description",
+          "Managed Segment Level 2 Description"]
+
+[[rwf_keys.key]]
+label  = "Key4 — Sgmt L3 + Geo L3"
+index  = ["Quarter Id", "Managed Segment Level 3 Code",
+          "Managed Geography Level 3 Description",
+          "Finance PMF Level 5 Description",
+          "Managed Segment Level 2 Description"]
+
+[[rwf_keys.key]]
+label  = "Key5 — Sgmt L3 only (no geo)"
+index  = ["Quarter Id", "Managed Segment Level 3 Code",
+          "Finance PMF Level 5 Description",
+          "Managed Segment Level 2 Description"]
+
+# ---------------------------------------------------------------------------
+# Parallel loading — controls how many Excel files are converted to Parquet
+# concurrently. Set max_workers to None to use all available CPU cores.
+# ---------------------------------------------------------------------------
+[parallel]
+max_workers     = 4
+if_exists       = "new"      # "new" = skip if parquet already exists, "replace" = always reconvert
+parquet_subdir  = "parquet_cache"

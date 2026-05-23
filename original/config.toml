@@ -1,0 +1,110 @@
+## Centralized configuration for Model Convergence & Outlook RWA pipelines
+
+[global_params]
+QO     = "Dec_2025"
+period = "may2026"
+data_dir              = "C:/Users/rl09895/Desktop/outlook-rwa-data/may2026"
+input_dir             = "C:/Users/rl09895/Desktop/outlook-rwa-data/may2026/Input"
+output_dir            = "C:/Users/rl09895/Desktop/outlook-rwa-data/may2026/output/run_20may2026_1530"
+model_convergence_dir = "C:/Users/rl09895/Desktop/outlook-rwa-data/may2026/output/run_20may2026_1530"
+duckdb_path           = "C:/Users/rl09895/Desktop/outlook-rwa-data/may2026/input/outlook_rwa_pipeline.duckdb"
+schema_registry_path  = "C:/Users/rl09895/project_home/outlook-rwa-release/outlook-rwa-app/src/main/tools/schema_registry.csv"
+
+## Step 1 inputs (manifest style)
+## --
+[inputs]
+
+[[inputs.step1]]
+variable_name = "cg_balancesheet"
+logical_name  = "cg_balancesheet"
+filename      = "outlook_balancesheet_cg.xlsx"
+schema_key    = "balancesheet"
+entity        = "CG"
+stage         = "step1"
+
+[[inputs.step1]]
+variable_name = "cbna_balancesheet"
+logical_name  = "cbna_balancesheet"
+filename      = "outlook_balancesheet_cbna.xlsx"
+schema_key    = "balancesheet"
+entity        = "CBNA"
+stage         = "step1"
+
+[[inputs.step1]]
+variable_name = "convergence"
+logical_name  = "convergence"
+filename      = "aggregator_for_convergence.xlsx"
+schema_key    = "convergence"
+stage         = "step1"
+
+[[inputs.step2]]
+logical_name = "pug_mapping"
+filename     = "pug_mapping.xlsx"
+schema_key   = "pug_mapping"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "pmit_rwa_mapping"
+filename     = "pmit_rwa_mapping.xlsx"
+schema_key   = "pmit_rwa_mapping"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "cg_outlook"
+filename     = "cg_outlook.run_20may2026_1530.xlsx"
+schema_key   = "cg_outlook"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "cbna_outlook"
+filename     = "cbna_outlook.run_20may2026_1530.xlsx"
+schema_key   = "cbna_outlook"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "cg_addon"
+filename     = "addon_all_cg.run_20may2026_1530.xlsx"
+schema_key   = "cg_addon"
+stage        = "step2"
+
+[[inputs.step2]]
+logical_name = "cbna_addon"
+filename     = "addon_all_cbna.run_20may2026_1530.xlsx"
+schema_key   = "cbna_addon"
+stage        = "step2"
+
+# outputs
+# --
+[outputs]
+
+[outputs.step1]
+cg_outlook                 = "cg_outlook.run_20may2026_1530.xlsx"
+cbna_outlook               = "cbna_outlook.run_20may2026_1530.xlsx"
+addon_non_waterfall_rwa    = "addon_all_cg.run_20may2026_1530.xlsx"
+cbna_addon_non_waterfall_rwa = "addon_all_cbna.run_20may2026_1530.xlsx"
+
+[outputs.step2]
+cg_upload_full   = "CG_Upload_Template_Full.run_20may2026_1530.xlsx"
+cbna_upload_full = "CBNA_Upload_Template_Full.run_20may2026_1530.xlsx"
+cg_raw_data      = "CG_RAW_DATA.run_20may2026_1530.xlsx"
+cbna_raw_data    = "CBNA_RAW_DATA.run_20may2026_1530.xlsx"
+control_file     = "control_file.run_20may2026_1530.xlsx"
+
+# RWF Keys — each [[rwf_keys.key]] entry defines one join key (most to least granular)
+# --
+[rwf_keys]
+
+[[rwf_keys.key]]
+index = 'Quarter Id,Managed Segment Level 4 Code,Managed Geography Level 4 Description,Finance PMF Level 5 Description,Managed Segment Level 2 Description'
+
+[[rwf_keys.key]]
+index = 'Quarter Id,Managed Segment Level 3 Code,Managed Geography Level 4 Description,Finance PMF Level 5 Description,Managed Segment Level 2 Description'
+
+[[rwf_keys.key]]
+index = 'Quarter Id,Managed Segment Level 2 Code,Managed Geography Level 4 Description,Finance PMF Level 5 Description,Managed Segment Level 2 Description'
+
+[[rwf_keys.key]]
+index = 'Quarter Id,Managed Segment Level 3 Code,Managed Geography Level 3 Description,Finance PMF Level 5 Description,Managed Segment Level 2 Description'
+
+[[rwf_keys.key]]
+index = 'Quarter Id,Managed Segment Level 3 Code,Finance PMF Level 5 Description,Managed Segment Level 2 Description'
