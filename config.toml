@@ -1,0 +1,16 @@
+[parameters]
+# Starting quarter of the projection horizon — "Month YYYY" format
+Q0 = "Mar 2025"
+
+[paths]
+data_dir = "C:/Users/ryanc/projects/outlook_rwa/data"
+schema_registry_csv = "C:/Users/ryanc/projects/outlook_rwa/data/schema_registry.csv"
+
+[outputs]
+step1_dir = "C:/Users/ryanc/projects/outlook_rwa/data/output/step1"
+
+[[outputs.step1]]
+cg_outlook = "cg_outlook.xlsx"
+cbna_outlook = "cbna_outlook.xlsx"
+cg_addon_non_waterfall_rwa = "addon_all_cg.xlsx"
+cbna_addon_non_waterfall_rwa = "addon_all_cbna.xlsx"
