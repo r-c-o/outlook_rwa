@@ -99,7 +99,7 @@ schema_registry = load_schema_registry_from_csv(schema_csv)
 _dtype_compat = {"int8": "float64", "int16": "float64", "int32": "float64", "int64": "float64",
                  "uint8": "float64", "uint16": "float64", "uint32": "float64", "uint64": "float64",
                  "boolean": "object", "bool": "object"}
-_flat_schema = {col: _dtype_compat.get(dtype.lower(), dtype)
+_flat_schema = {col: _dtype_compat.get(str(dtype).lower(), str(dtype))
                 for d in schema_registry.values()
                 for col, dtype in d.items()}
 
