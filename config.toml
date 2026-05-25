@@ -5,9 +5,12 @@ Q0 = "Mar 2025"
 [paths]
 data_dir = "C:/Users/ryanc/projects/outlook_rwa/data"
 schema_registry_csv = "C:/Users/ryanc/projects/outlook_rwa/data/schema_registry.csv"
+data_dir_backup = "C:/Users/ri09895/Desktop/outlook-rwa-data/may2026"
+schema_registry_csv_backup = "C:/Users/ri09895/project_home/outlook-rwa-release/outlook-rwa-app/src/main/tools/schema_registry.csv"
 
 [outputs]
 step1_dir = "C:/Users/ryanc/projects/outlook_rwa/data/output/step1"
+step1_dir_backup = "C:/Users/ri09895/Desktop/outlook-rwa-data/may2026/output/step1"
 
 [[outputs.step1]]
 cg_outlook = "cg_outlook.xlsx"

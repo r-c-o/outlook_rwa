@@ -76,6 +76,8 @@ config_path = Path(__file__).parent.parent.parent.parent / "config.toml"
 config = toml.load(config_path)
 
 schema_csv = Path(config["paths"]["schema_registry_csv"])
+if not schema_csv.exists() and "schema_registry_csv_backup" in config["paths"]:
+    schema_csv = Path(config["paths"]["schema_registry_csv_backup"])
 
 # Starting quarter (first quarter of the projection horizon, e.g. "Mar 2025")
 Q0 = config["parameters"]["Q0"]
@@ -85,12 +87,17 @@ Q0 = config["parameters"]["Q0"]
 # =============================================================================
 
 data_dir = Path(config["paths"]["data_dir"])
+if not data_dir.exists() and "data_dir_backup" in config["paths"]:
+    data_dir = Path(config["paths"]["data_dir_backup"])
 input_dir = data_dir / "input"
 output_dir = Path(config["outputs"]["step1_dir"])
+if not output_dir.exists() and "step1_dir_backup" in config["outputs"]:
+    output_dir = Path(config["outputs"]["step1_dir_backup"])
 output_dir.mkdir(parents=True, exist_ok=True)
 schema_registry = load_schema_registry_from_csv(schema_csv)
 
-_flat_schema = {col: dtype for d in schema_registry.values() for col, dtype in d.items()}
+_dtype_compat = {"Int64": "float64", "Int32": "float32", "Int16": "float32", "Int8": "float32"}
+_flat_schema = {col: _dtype_compat.get(str(dtype), str(dtype)) for d in schema_registry.values() for col, dtype in d.items()}
 
 # %%
 try:
