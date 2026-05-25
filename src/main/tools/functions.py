@@ -175,8 +175,9 @@ def compute_rwf(key_df, adv_rwa_col):
 
 def set_markets_rwf(key_df):
     """Null out RWFs for Markets rows (they get add-on treatment instead)."""
-    key_df[SA_RWF] = key_df[SA_RWF].where(~key_df[MNGD_SGMT_L2_DESC].isin([MARKETS_L2]))
-    key_df[AA_RWF] = key_df[AA_RWF].where(~key_df[MNGD_SGMT_L2_DESC].isin([MARKETS_L2]))
+    is_markets = key_df.index.get_level_values(MNGD_SGMT_L2_DESC).isin([MARKETS_L2])
+    key_df[SA_RWF] = key_df[SA_RWF].where(~is_markets)
+    key_df[AA_RWF] = key_df[AA_RWF].where(~is_markets)
     return key_df
 
 
@@ -245,7 +246,7 @@ def create_quarterly_pivot(df):
         index=pivot_index,
         values=["Mar", "Jun", "Sep", "Dec"],
         aggfunc="sum",
-    )
+    ).reset_index()
 
 
 def melt_quarterly_pivot(pivot_df):

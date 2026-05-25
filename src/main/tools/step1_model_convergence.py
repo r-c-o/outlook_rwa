@@ -12,7 +12,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from date    import datetime
+from datetime import datetime
 
 import toml
 from functions import (
@@ -75,7 +75,7 @@ pd.set_option("display.max_columns", 500)
 config_path = Path(__file__).parent.parent.parent.parent / "config.toml"
 config = toml.load(config_path)
 
-schema_csv = Path(config["schema_registry_csv"])
+schema_csv = Path(config["paths"]["schema_registry_csv"])
 
 # Starting quarter (first quarter of the projection horizon, e.g. "Mar 2025")
 Q0 = config["parameters"]["Q0"]
@@ -84,7 +84,7 @@ Q0 = config["parameters"]["Q0"]
 # 1. Read Input Files
 # =============================================================================
 
-data_dir = Path(config["data_dir"])
+data_dir = Path(config["paths"]["data_dir"])
 input_dir = data_dir / "input"
 
 src_cg = pd.read_excel(input_dir / "outlook_balancesheet_cg.xlsx")
@@ -114,11 +114,12 @@ dummy_df = dummy_df.rename(columns={
 })
 dummy_df = dummy_df.drop_duplicates(subset="Managed Geography Level 4 Description", keep="first")
 
-convergence = convergence.merge(
-    dummy_df[["Managed Geography Level 3 Description", "Managed Geography Level 4 Description"]],
-    on="Managed Geography Level 4 Description",
-    how="left",
-)
+if "Managed Geography Level 3 Description" not in convergence.columns:
+    convergence = convergence.merge(
+        dummy_df[["Managed Geography Level 3 Description", "Managed Geography Level 4 Description"]],
+        on="Managed Geography Level 4 Description",
+        how="left",
+    )
 
 # =============================================================================
 # 3. Normalise PMF Account / Finance PMF column types
@@ -181,14 +182,7 @@ for key_df in [
     set_markets_rwf(key_df)
 
 # =============================================================================
-# 6. Build Quarter Mapping
-# =============================================================================
-
-max_quarters = check_and_get_max_quarters(convergence, cg, cbna)
-quarter_map, quarter_id_mapping = build_quarter_mappings(Q0, max_quarters)
-
-# =============================================================================
-# 7. Reshape Balance Sheet — Pivot then Melt to Long Format
+# 6. Reshape Balance Sheet — Pivot then Melt to Long Format
 # =============================================================================
 
 rename_month_columns(cg)
@@ -202,6 +196,13 @@ cbna_outlook = melt_quarterly_pivot(cbna_pivot)
 
 print(f"CG outlook long rows:   {len(cg_outlook):,}")
 print(f"CBNA outlook long rows: {len(cbna_outlook):,}")
+
+# =============================================================================
+# 7. Build Quarter Mapping
+# =============================================================================
+
+max_quarters = check_and_get_max_quarters(convergence, cg_outlook, cbna_outlook)
+quarter_map, quarter_id_mapping = build_quarter_mappings(Q0, max_quarters)
 
 # =============================================================================
 # 8. Assign Quarter IDs
@@ -285,7 +286,15 @@ assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook)
 # 11b. Addon: Markets / Non-Waterfall
 # =============================================================================
 
+cg_addon_markets_credit_risk[SA_RWA] = cg_addon_markets_credit_risk[SA_RWA_AMT]
+cbna_addon_markets_credit_risk[SA_RWA] = cbna_addon_markets_credit_risk[SA_RWA_AMT]
 assign_erba_rwa_and_metadata(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk)
+
+_pq_to_month = {1: "Mar", 2: "Jun", 3: "Sep", 4: "Dec"}
+for addon_df in [cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk]:
+    q_num = addon_df["Projected Quarter"].str[0].astype(int)
+    addon_df["YEAR"] = ("20" + addon_df["Projected Quarter"].str[2:]).astype(int)
+    addon_df["Month"] = q_num.map(_pq_to_month)
 
 assign_quarter_id(cg_addon_markets_credit_risk, quarter_id_mapping)
 assign_quarter_id(cbna_addon_markets_credit_risk, quarter_id_mapping)
