@@ -18,6 +18,13 @@ from constants import *
 # Business Logic Functions
 # =============================================================================
 
+def _int_str(series: pd.Series) -> pd.Series:
+    """Convert float-typed integer columns to clean int strings (e.g. 4.0 → '4')."""
+    return pd.to_numeric(series, errors="coerce").apply(
+        lambda x: str(int(x)) if pd.notna(x) else str(x)
+    )
+
+
 def assign_quarter_id(outlook_df, quarter_id_mapping):
     """
     Assigns Quarter Id to the outlook DataFrame based on YEAR and Month columns
@@ -186,31 +193,31 @@ def build_outlook_key_strings(outlook_df):
     Modifies the DataFrame in place.
     """
     outlook_df["Key1"] = (
-        outlook_df[MANAGED_SGMNT_L4_ID].astype(str)
+        _int_str(outlook_df[MANAGED_SGMNT_L4_ID])
         + outlook_df[MANAGED_GEO_L4_DESC].astype(str)
         + outlook_df[PMF_ACCT_L5_DESC].astype(str)
         + outlook_df[QRTR_ID].astype(str)
     )
     outlook_df["Key2"] = (
-        outlook_df[MANAGED_SGMNT_L3_ID].astype(str)
+        _int_str(outlook_df[MANAGED_SGMNT_L3_ID])
         + outlook_df[MANAGED_GEO_L4_DESC].astype(str)
         + outlook_df[PMF_ACCT_L5_DESC].astype(str)
         + outlook_df[QRTR_ID].astype(str)
     )
     outlook_df["Key3"] = (
-        outlook_df[MANAGED_SGMNT_L2_ID].astype(str)
+        _int_str(outlook_df[MANAGED_SGMNT_L2_ID])
         + outlook_df[MANAGED_GEO_L4_DESC].astype(str)
         + outlook_df[PMF_ACCT_L5_DESC].astype(str)
         + outlook_df[QRTR_ID].astype(str)
     )
     outlook_df["Key4"] = (
-        outlook_df[MANAGED_SGMNT_L3_ID].astype(str)
+        _int_str(outlook_df[MANAGED_SGMNT_L3_ID])
         + outlook_df[MANAGED_GEO_L3_DESC].astype(str)
         + outlook_df[PMF_ACCT_L5_DESC].astype(str)
         + outlook_df[QRTR_ID].astype(str)
     )
     outlook_df["Key5"] = (
-        outlook_df[MANAGED_SGMNT_L3_ID].astype(str)
+        _int_str(outlook_df[MANAGED_SGMNT_L3_ID])
         + outlook_df[PMF_ACCT_L5_DESC].astype(str)
         + outlook_df[QRTR_ID].astype(str)
     )
