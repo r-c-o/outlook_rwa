@@ -96,8 +96,12 @@ if not output_dir.exists() and "step1_dir_backup" in config["outputs"]:
 output_dir.mkdir(parents=True, exist_ok=True)
 schema_registry = load_schema_registry_from_csv(schema_csv)
 
-_dtype_compat = {"Int64": "float64", "Int32": "float32", "Int16": "float32", "Int8": "float32"}
-_flat_schema = {col: _dtype_compat.get(str(dtype), str(dtype)) for d in schema_registry.values() for col, dtype in d.items()}
+_dtype_compat = {"Int8": "float64", "Int16": "float64", "Int32": "float64", "Int64": "float64",
+                 "UInt8": "float64", "UInt16": "float64", "UInt32": "float64", "UInt64": "float64",
+                 "boolean": "object"}
+_flat_schema = {col: _dtype_compat.get(dtype, dtype)
+                for d in schema_registry.values()
+                for col, dtype in d.items()}
 
 # %%
 try:
