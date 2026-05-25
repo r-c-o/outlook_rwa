@@ -48,7 +48,7 @@ def calculate_sa_rwa(df):
     df[SA_RWA] = np.where(
         df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
         0,
-        df["Balances"] * df["FINAL_SA_RWF"],
+        pd.to_numeric(df["Balances"], errors="coerce") * df["FINAL_SA_RWF"],
     )
 
 
@@ -71,7 +71,7 @@ def calculate_aa_rwa(df):
     df[AA_RWA] = np.where(
         df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
         0,
-        df["Balances"] * df["FINAL_AA_RWF"],
+        pd.to_numeric(df["Balances"], errors="coerce") * df["FINAL_AA_RWF"],
     )
 
 
@@ -166,9 +166,9 @@ def create_key_pivots(crd_df, adv_rwa_col):
 
 def compute_rwf(key_df, adv_rwa_col):
     """Compute SA RWF and AA RWF, cap at abs(12.5), set out-of-range to 1."""
-    key_df[SA_RWF] = key_df[SA_RWA_AMT] / key_df[GAAP_AMOUNT]
+    key_df[SA_RWF] = pd.to_numeric(key_df[SA_RWA_AMT], errors="coerce") / pd.to_numeric(key_df[GAAP_AMOUNT], errors="coerce")
     key_df.loc[key_df[SA_RWF].abs() > 12.5, SA_RWF] = 1
-    key_df[AA_RWF] = key_df[adv_rwa_col] / key_df[GAAP_AMOUNT]
+    key_df[AA_RWF] = pd.to_numeric(key_df[adv_rwa_col], errors="coerce") / pd.to_numeric(key_df[GAAP_AMOUNT], errors="coerce")
     key_df.loc[key_df[AA_RWF].abs() > 12.5, AA_RWF] = 1
     return key_df
 

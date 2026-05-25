@@ -86,14 +86,24 @@ Q0 = config["parameters"]["Q0"]
 
 data_dir = Path(config["paths"]["data_dir"])
 input_dir = data_dir / "input"
+output_dir = Path(config["outputs"]["step1_dir"])
+output_dir.mkdir(parents=True, exist_ok=True)
+schema_registry = load_schema_registry_from_csv(schema_csv)
+
+_flat_schema = {col: dtype for d in schema_registry.values() for col, dtype in d.items()}
 
 # %%
 try:
-    src_cg             = pd.read_parquet(output_dir / "outlook_balancesheet_cg.parquet")
-    src_cbna           = pd.read_parquet(output_dir / "outlook_balancesheet_cbna.parquet")
-    src_convergence    = pd.read_parquet(output_dir / "aggregator_for_convergence.parquet")
+    src_cg = pd.read_parquet(output_dir / "outlook_balancesheet_cg.parquet")
+    src_cg = src_cg.astype({c: _flat_schema[c] for c in src_cg.columns if c in _flat_schema}, errors="ignore")
+    src_cbna = pd.read_parquet(output_dir / "outlook_balancesheet_cbna.parquet")
+    src_cbna = src_cbna.astype({c: _flat_schema[c] for c in src_cbna.columns if c in _flat_schema}, errors="ignore")
+    src_convergence = pd.read_parquet(output_dir / "aggregator_for_convergence.parquet")
+    src_convergence = src_convergence.astype({c: _flat_schema[c] for c in src_convergence.columns if c in _flat_schema}, errors="ignore")
     src_cg_adjustments = pd.read_parquet(output_dir / "adjustments_cg.parquet")
+    src_cg_adjustments = src_cg_adjustments.astype({c: _flat_schema[c] for c in src_cg_adjustments.columns if c in _flat_schema}, errors="ignore")
     src_cbna_adjustments = pd.read_parquet(output_dir / "adjustments_cbna.parquet")
+    src_cbna_adjustments = src_cbna_adjustments.astype({c: _flat_schema[c] for c in src_cbna_adjustments.columns if c in _flat_schema}, errors="ignore")
 except Exception as e:
     print(f"Error reading parquet files: {e}")
     print("Please ensure the parquet files were created successfully in the previous step.")
@@ -324,17 +334,12 @@ print(f"CBNA addon non-waterfall rows: {len(cbna_addon_non_waterfall_rwa):,}")
 # 12. Export Outputs
 # =============================================================================
 
-output_dir = Path(config["outputs"]["step1_dir"])
-output_dir.mkdir(parents=True, exist_ok=True)
-
 output_files = {
     config["outputs"]["step1"][0]["cg_outlook"]: cg_outlook,
     config["outputs"]["step1"][0]["cbna_outlook"]: cbna_outlook,
     config["outputs"]["step1"][0]["cg_addon_non_waterfall_rwa"]: cg_addon_non_waterfall_rwa,
     config["outputs"]["step1"][0]["cbna_addon_non_waterfall_rwa"]: cbna_addon_non_waterfall_rwa,
 }
-
-schema_registry = load_schema_registry_from_csv(schema_csv)
 
 for fname, df in output_files.items():
     schema = {
