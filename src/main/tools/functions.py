@@ -318,7 +318,7 @@ def build_quarter_mappings(Q0, max_quarters):
         quarter = i // 3
         temp_date = q0_date + relativedelta(months=i)
         quarter_map[quarter] = (temp_date.year, temp_date.strftime("%b"))
-        quarter_id_mapping[(temp_date.year, temp_date.strftime("%b"))] = str(quarter)
+        quarter_id_mapping[(temp_date.year, temp_date.strftime("%b"))] = str(quarter + 1)
 
     print("Quarter mapping:")
     for k, v in quarter_map.items():
