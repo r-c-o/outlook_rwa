@@ -1,0 +1,111 @@
+schema_key,column_name,polars_dtype
+balancesheet,FRS BU (Leaf),Int64
+balancesheet,PMF Account (Leaf),Int64
+balancesheet,YEAR,Int64
+balancesheet,Managed Segment L1 Id,Int64
+balancesheet,Managed Segment L2 Id,Int64
+balancesheet,Managed Segment L3 Id,Int64
+balancesheet,Managed Segment L4 Id,Int64
+balancesheet,Managed Segment L5 Id,Int64
+balancesheet,Managed Geography L1 Id,Int64
+balancesheet,Managed Geography L2 Id,String
+balancesheet,Managed Geography L3 Id,Int64
+balancesheet,Managed Geography L4 Id,String
+balancesheet,Managed Geography L5 Id,String
+balancesheet,PMF Account L2 Id,Int64
+balancesheet,PMF Account L3 Id,Int64
+balancesheet,PMF Account L4 Id,Int64
+balancesheet,PMF Account L5 Id,Int64
+balancesheet,PMF Account L6 Id,Int64
+balancesheet,PMF Account L7 Id,Int64
+balancesheet,PMF Account L8 Id,Int64
+balancesheet,PMF_FLIP_SIGN,Int64
+balancesheet,AFFILIATE,Int64
+balancesheet,FRS BU (Node),Int64
+balancesheet,M3_USDOLLAR,Float64
+balancesheet,M6_USDOLLAR,Float64
+balancesheet,M9_USDOLLAR,Float64
+balancesheet,M12_USDOLLAR,Float64
+balancesheet,SCENARIO,String
+balancesheet,Managed Segment L1 Descr,String
+balancesheet,Managed Segment L2 Descr,String
+balancesheet,Managed Segment L3 Descr,String
+balancesheet,Managed Segment L4 Descr,String
+balancesheet,Managed Segment L5 Descr,String
+balancesheet,Managed Geography L1 Descr,String
+balancesheet,Managed Geography L2 Descr,String
+balancesheet,Managed Geography L3 Descr,String
+balancesheet,Managed Geography L4 Descr,String
+balancesheet,Managed Geography L5 Descr,String
+balancesheet,PMF Account L1 Descr,String
+balancesheet,PMF Account L2 Descr,String
+balancesheet,PMF Account L3 Descr,String
+balancesheet,PMF Account L4 Descr,String
+balancesheet,PMF Account L5 Descr,String
+balancesheet,PMF Account L6 Descr,String
+balancesheet,PMF Account L7 Descr,String
+balancesheet,PMF Account L8 Descr,String
+balancesheet,Balance Type,String
+balancesheet,FRS BU (Node) Descr,String
+convergence,CCAR Cycle,String
+convergence,Scope,String
+convergence,Managed Segment Level 1 Code,Int64
+convergence,Managed Segment Level 2 Code,Int64
+convergence,Managed Segment Level 3 Code,Int64
+convergence,Managed Segment Level 4 Code,Int64
+convergence,Version Number,Int64
+convergence,Fiscal Year Accounting Period,Int64
+convergence,Quarter Id,Int64
+convergence,RWA Exposure Type Description,String
+convergence,Data Category,String
+convergence,Projected Quarter,String
+convergence,Scenario Id,String
+convergence,Scenario Name,String
+convergence,Error Flag,String
+convergence,Reportable Entity is CBNA,String
+convergence,Reportable Entity is CG,String
+convergence,Managed Segment Level 1 Description,String
+convergence,Managed Segment Level 2 Description,String
+convergence,Managed Segment Level 3 Description,String
+convergence,Managed Segment Level 4 Description,String
+convergence,Managed Geography Level 3 Description,String
+convergence,Managed Geography Level 4 Description,String
+convergence,Finance PMF Level 5 Description,String
+convergence,Comments,String
+convergence,GAAP Amount,Float64
+convergence,Adv. CG Total RWA Amount with 1.06 Multiplier,Float64
+convergence,Adv. CBNA Total RWA Amount with 1.06 Multiplier,Float64
+convergence,SA RWA Amount,Float64
+addon,YEAR,Int64
+addon,Managed Segment L2 Id,Int64
+addon,Managed Segment L3 Id,Int64
+addon,Managed Segment L4 Id,Int64
+addon,Quarter Id,Int64
+addon,Managed Segment L2 Descr,String
+addon,Managed Segment L3 Descr,String
+addon,Managed Segment L4 Descr,String
+addon,Managed Geography L3 Descr,String
+addon,Managed Geography L4 Descr,String
+addon,PMF Account L5 Descr,String
+addon,Month,String
+addon,Key1,String
+addon,Key2,String
+addon,Key3,String
+addon,Key4,String
+addon,Key5,String
+addon,Balances,Float64
+addon,SA RWF,Float64
+addon,AA RWF,Float64
+addon,SA RWF_key2,Float64
+addon,AA RWF_key2,Float64
+addon,SA RWF_key3,Float64
+addon,AA RWF_key3,Float64
+addon,SA RWF_key4,Float64
+addon,AA RWF_key4,Float64
+addon,SA RWF_key5,Float64
+addon,AA RWF_key5,Float64
+addon,FINAL_SA_RWF,Float64
+addon,FINAL_AA_RWF,Float64
+addon,SA RWA,Float64
+addon,AA RWA,Float64
+addon,ERBA RWA,Float64
