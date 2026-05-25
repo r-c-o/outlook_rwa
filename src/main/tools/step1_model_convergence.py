@@ -96,9 +96,14 @@ if not output_dir.exists() and "step1_dir_backup" in config["outputs"]:
 output_dir.mkdir(parents=True, exist_ok=True)
 schema_registry = load_schema_registry_from_csv(schema_csv)
 
-_dtype_compat = {"int8": "float64", "int16": "float64", "int32": "float64", "int64": "float64",
-                 "uint8": "float64", "uint16": "float64", "uint32": "float64", "uint64": "float64",
-                 "boolean": "object", "bool": "object"}
+_dtype_compat = {
+    "int8": "float64", "int16": "float64", "int32": "float64", "int64": "float64",
+    "uint8": "float64", "uint16": "float64", "uint32": "float64", "uint64": "float64",
+    "boolean": "object", "bool": "object",
+    "string": "object", "utf8": "object", "large_string": "object", "large_utf8": "object",
+    "categorical": "object", "date": "object", "duration": "object",
+    "datetime": "datetime64[ns]",
+}
 _flat_schema = {col: np.dtype(_dtype_compat.get(str(dtype).lower(), str(dtype).lower()))
                 for d in schema_registry.values()
                 for col, dtype in d.items()}
