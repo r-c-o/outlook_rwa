@@ -87,11 +87,21 @@ Q0 = config["parameters"]["Q0"]
 data_dir = Path(config["paths"]["data_dir"])
 input_dir = data_dir / "input"
 
-src_cg = pd.read_excel(input_dir / "outlook_balancesheet_cg.xlsx")
-src_cbna = pd.read_excel(input_dir / "outlook_balancesheet_cbna.xlsx")
-src_convergence = pd.read_excel(input_dir / "aggregator_for_convergence.xlsx")
-src_cg_adjustments = pd.read_excel(input_dir / "adjustment_master_file.xlsx", sheet_name="Adjustments - CG")
-src_cbna_adjustments = pd.read_excel(input_dir / "adjustment_master_file.xlsx", sheet_name="Adjustments - CBNA")
+# %%
+try:
+    src_cg             = pd.read_parquet(output_dir / "outlook_balancesheet_cg.parquet")
+    src_cbna           = pd.read_parquet(output_dir / "outlook_balancesheet_cbna.parquet")
+    src_convergence    = pd.read_parquet(output_dir / "aggregator_for_convergence.parquet")
+    src_cg_adjustments = pd.read_parquet(output_dir / "adjustments_cg.parquet")
+    src_cbna_adjustments = pd.read_parquet(output_dir / "adjustments_cbna.parquet")
+except Exception as e:
+    print(f"Error reading parquet files: {e}")
+    print("Please ensure the parquet files were created successfully in the previous step.")
+    src_cg             = pd.read_excel(input_dir / "outlook_balancesheet_cg.xlsx")
+    src_cbna           = pd.read_excel(input_dir / "outlook_balancesheet_cbna.xlsx")
+    src_convergence    = pd.read_excel(input_dir / "aggregator_for_convergence.xlsx")
+    src_cg_adjustments = pd.read_excel(input_dir / "adjustment_master_file.xlsx", sheet_name="Adjustments - CG")
+    src_cbna_adjustments = pd.read_excel(input_dir / "adjustment_master_file.xlsx", sheet_name="Adjustments - CBNA")
 
 cg = src_cg.copy(deep=True)
 cbna = src_cbna.copy(deep=True)
@@ -292,8 +302,11 @@ assign_erba_rwa_and_metadata(cg_addon_markets_credit_risk, cbna_addon_markets_cr
 
 _pq_to_month = {1: "Mar", 2: "Jun", 3: "Sep", 4: "Dec"}
 for addon_df in [cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk]:
-    q_num = addon_df["Projected Quarter"].str[0].astype(int)
-    addon_df["YEAR"] = ("20" + addon_df["Projected Quarter"].str[2:]).astype(int)
+    q_num = pd.to_numeric(addon_df["Projected Quarter"].str[0], errors="coerce").astype("Int64")
+    addon_df["YEAR"] = pd.to_numeric(
+        addon_df["Projected Quarter"].str[2:].apply(lambda x: "20" + x if pd.notna(x) else x),
+        errors="coerce",
+    ).astype("Int64")
     addon_df["Month"] = q_num.map(_pq_to_month)
 
 assign_quarter_id(cg_addon_markets_credit_risk, quarter_id_mapping)
