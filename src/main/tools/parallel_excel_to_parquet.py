@@ -20,6 +20,25 @@ class ExcelInputSpec:
     sheet_name: int | str | None = 0
 
 
+def make_input_specs(input_dir: Path) -> Dict[str, ExcelInputSpec]:
+    """Source Excel specs shared by step1 and step2, keyed by label.
+
+    step2 reuses the convergence and adjustments specs from here so the two
+    pipeline stages reference one definition of each source file rather than
+    duplicating paths/schemas. The parquet cache directory is supplied
+    separately by each caller (step1 caches in its output dir, step2 in
+    input_dir / model_convergence_dir).
+    """
+    input_dir = Path(input_dir)
+    return {
+        "cg":               ExcelInputSpec("cg", input_dir / "outlook_balancesheet_cg.xlsx", "balancesheet", "outlook_balancesheet_cg.parquet"),
+        "cbna":             ExcelInputSpec("cbna", input_dir / "outlook_balancesheet_cbna.xlsx", "balancesheet", "outlook_balancesheet_cbna.parquet"),
+        "convergence":      ExcelInputSpec("convergence", input_dir / "aggregator_for_convergence.xlsx", "convergence", "aggregator_for_convergence.parquet"),
+        "cg_adjustments":   ExcelInputSpec("cg_adjustments", input_dir / "adjustment_master_file.xlsx", "adjustments", "adjustments_cg.parquet", "Adjustments - CG"),
+        "cbna_adjustments": ExcelInputSpec("cbna_adjustments", input_dir / "adjustment_master_file.xlsx", "adjustments", "adjustments_cbna.parquet", "Adjustments - CBNA"),
+    }
+
+
 # =============================================================================
 # LOAD SCHEMA REGISTRY FROM CSV
 # =============================================================================

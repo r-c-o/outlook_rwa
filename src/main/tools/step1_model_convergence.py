@@ -36,7 +36,7 @@ from parallel_excel_to_parquet import (
     load_schema_registry_from_csv,
     convert_files_to_parquet,
     export_outputs,
-    ExcelInputSpec,
+    make_input_specs,
 )
 from constants import (
     ADV_CG_TOTAL_RWA_AMT,
@@ -114,13 +114,7 @@ _flat_schema = {col: np.dtype(_dtype_compat.get(str(dtype).lower(), str(dtype).l
                 for col, dtype in d.items()}
 
 # %%
-_input_specs = [
-    ExcelInputSpec("cg", input_dir / "outlook_balancesheet_cg.xlsx", "balancesheet", "outlook_balancesheet_cg.parquet"),
-    ExcelInputSpec("cbna", input_dir / "outlook_balancesheet_cbna.xlsx", "balancesheet", "outlook_balancesheet_cbna.parquet"),
-    ExcelInputSpec("convergence", input_dir / "aggregator_for_convergence.xlsx", "convergence", "aggregator_for_convergence.parquet"),
-    ExcelInputSpec("cg_adjustments", input_dir / "adjustment_master_file.xlsx", "adjustments", "adjustments_cg.parquet", "Adjustments - CG"),
-    ExcelInputSpec("cbna_adjustments", input_dir / "adjustment_master_file.xlsx", "adjustments", "adjustments_cbna.parquet", "Adjustments - CBNA"),
-]
+_input_specs = list(make_input_specs(input_dir).values())
 
 
 def _read_parquets():
