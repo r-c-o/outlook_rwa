@@ -2,6 +2,9 @@
 chat_session.json
 *.jsonl
 
+# Machine-specific config override (paths, Q0) — never commit
+config.local.toml
+
 # Python
 __pycache__/
 *.py[cod]

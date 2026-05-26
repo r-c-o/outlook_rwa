@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import polars as pl
+import toml
 from constants import *
 
 
@@ -17,6 +18,32 @@ from constants import *
 # =============================================================================
 # Business Logic Functions
 # =============================================================================
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge `override` into a copy of `base` (override wins)."""
+    result = dict(base)
+    for key, val in override.items():
+        if isinstance(val, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def load_config(config_dir):
+    """Load config.toml and merge an optional git-ignored config.local.toml over it.
+
+    Machine-specific values (paths, Q0) belong in config.local.toml so they stay
+    out of version control and never conflict on `git pull`. Falls back to
+    config.toml alone when no local override exists.
+    """
+    config_dir = Path(config_dir)
+    config = toml.load(config_dir / "config.toml")
+    local_path = config_dir / "config.local.toml"
+    if local_path.exists():
+        config = _deep_merge(config, toml.load(local_path))
+    return config
+
 
 def _int_str(series: pd.Series) -> pd.Series:
     """Convert float-typed integer columns to clean int strings (e.g. 4.0 → '4')."""
