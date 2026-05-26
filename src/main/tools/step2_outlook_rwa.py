@@ -301,8 +301,11 @@ if pug_dupes.sum() > 0:
 else:
     print(f"PUG mapping is 1:1 on Managed Segment L4 Descr")
 
+# Rename PMF RWA mapping columns to canonical schema (source file uses "PMF L5")
+rwa_pmf_mapping = rwa_pmf_mapping.rename(columns={"PMF L5": PMF_ACCOUNT_L5_DESCR})
+
 # Data Quality Check: PMF RWA mapping duplicates on PMF L5
-pmf_dupes = src_rwa_pmf_mapping.duplicated(subset=[PMF_ACCOUNT_L5_DESCR], keep=False)
+pmf_dupes = rwa_pmf_mapping.duplicated(subset=[PMF_ACCOUNT_L5_DESCR], keep=False)
 if pmf_dupes.sum() > 0:
     warnings.warn(f"PMF RWA mapping has {pmf_dupes.sum()} duplicates on PMF L5")
 else:

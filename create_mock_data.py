@@ -228,7 +228,7 @@ print("✅ aggregator_for_convergence.xlsx written")
 # ---------------------------------------------------------------------------
 
 pmf_map_df = pd.DataFrame({
-    "PMF Account L5 Descr": [
+    "PMF L5": [
         "Total Loans & Leases Net of Unearned (L2)",
         "Other Assets (L2)",
         "Investments (L2)",
@@ -240,9 +240,10 @@ pmf_map_df = pd.DataFrame({
         "Securities Borrowed (L2)",
         "Securities Lent (L2)",
     ],
-    "SA Account #": [f"SA-{i:04d}" for i in range(1, 11)],
-    "AA Account #": [f"AA-{i:04d}" for i in range(1, 11)],
-    "RWA Calc": ["Credit Risk"] * 6 + ["Market Risk"] * 4,
+    "SA Account #":         [f"SA-{i:04d}" for i in range(1, 11)],
+    "SA Leaf Account Name": [f"SA Leaf {i}" for i in range(1, 11)],
+    "AA Account #":         [f"AA-{i:04d}" for i in range(1, 11)],
+    "AA Leaf Account Name": [f"AA Leaf {i}" for i in range(1, 11)],
 })
 
 with pd.ExcelWriter(data_dir / "pmf_rwa_mapping.xlsx", engine="openpyxl") as writer:
