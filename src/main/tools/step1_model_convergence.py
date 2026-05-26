@@ -32,7 +32,11 @@ from functions import (
     check_and_get_max_quarters,
     build_quarter_mappings,
 )
-from parallel_excel_to_parquet import load_schema_registry_from_csv
+from parallel_excel_to_parquet import (
+    load_schema_registry_from_csv,
+    convert_files_to_parquet,
+    ExcelInputSpec,
+)
 from constants import (
     ADV_CG_TOTAL_RWA_AMT,
     ADV_CBNA_TOTAL_RWA_AMT,
@@ -110,25 +114,35 @@ _flat_schema = {col: np.dtype(_dtype_compat.get(str(dtype).lower(), str(dtype).l
                 for col, dtype in d.items()}
 
 # %%
+_input_specs = [
+    ExcelInputSpec("cg", input_dir / "outlook_balancesheet_cg.xlsx", "balancesheet", "outlook_balancesheet_cg.parquet"),
+    ExcelInputSpec("cbna", input_dir / "outlook_balancesheet_cbna.xlsx", "balancesheet", "outlook_balancesheet_cbna.parquet"),
+    ExcelInputSpec("convergence", input_dir / "aggregator_for_convergence.xlsx", "convergence", "aggregator_for_convergence.parquet"),
+    ExcelInputSpec("cg_adjustments", input_dir / "adjustment_master_file.xlsx", "adjustments", "adjustments_cg.parquet", "Adjustments - CG"),
+    ExcelInputSpec("cbna_adjustments", input_dir / "adjustment_master_file.xlsx", "adjustments", "adjustments_cbna.parquet", "Adjustments - CBNA"),
+]
+
+
+def _read_parquets():
+    def _load(name):
+        df = pd.read_parquet(output_dir / name)
+        return df.astype({c: _flat_schema[c] for c in df.columns if c in _flat_schema}, errors="ignore")
+    return (
+        _load("outlook_balancesheet_cg.parquet"),
+        _load("outlook_balancesheet_cbna.parquet"),
+        _load("aggregator_for_convergence.parquet"),
+        _load("adjustments_cg.parquet"),
+        _load("adjustments_cbna.parquet"),
+    )
+
+
 try:
-    src_cg = pd.read_parquet(output_dir / "outlook_balancesheet_cg.parquet")
-    src_cg = src_cg.astype({c: _flat_schema[c] for c in src_cg.columns if c in _flat_schema}, errors="ignore")
-    src_cbna = pd.read_parquet(output_dir / "outlook_balancesheet_cbna.parquet")
-    src_cbna = src_cbna.astype({c: _flat_schema[c] for c in src_cbna.columns if c in _flat_schema}, errors="ignore")
-    src_convergence = pd.read_parquet(output_dir / "aggregator_for_convergence.parquet")
-    src_convergence = src_convergence.astype({c: _flat_schema[c] for c in src_convergence.columns if c in _flat_schema}, errors="ignore")
-    src_cg_adjustments = pd.read_parquet(output_dir / "adjustments_cg.parquet")
-    src_cg_adjustments = src_cg_adjustments.astype({c: _flat_schema[c] for c in src_cg_adjustments.columns if c in _flat_schema}, errors="ignore")
-    src_cbna_adjustments = pd.read_parquet(output_dir / "adjustments_cbna.parquet")
-    src_cbna_adjustments = src_cbna_adjustments.astype({c: _flat_schema[c] for c in src_cbna_adjustments.columns if c in _flat_schema}, errors="ignore")
+    src_cg, src_cbna, src_convergence, src_cg_adjustments, src_cbna_adjustments = _read_parquets()
 except Exception as e:
     print(f"Error reading parquet files: {e}")
-    print("Please ensure the parquet files were created successfully in the previous step.")
-    src_cg             = pd.read_excel(input_dir / "outlook_balancesheet_cg.xlsx")
-    src_cbna           = pd.read_excel(input_dir / "outlook_balancesheet_cbna.xlsx")
-    src_convergence    = pd.read_excel(input_dir / "aggregator_for_convergence.xlsx")
-    src_cg_adjustments = pd.read_excel(input_dir / "adjustment_master_file.xlsx", sheet_name="Adjustments - CG")
-    src_cbna_adjustments = pd.read_excel(input_dir / "adjustment_master_file.xlsx", sheet_name="Adjustments - CBNA")
+    print("Parquet files missing — building them from Excel via the parallel loader...")
+    convert_files_to_parquet(_input_specs, output_dir, schema_csv)
+    src_cg, src_cbna, src_convergence, src_cg_adjustments, src_cbna_adjustments = _read_parquets()
 
 cg = src_cg.copy(deep=True)
 cbna = src_cbna.copy(deep=True)
