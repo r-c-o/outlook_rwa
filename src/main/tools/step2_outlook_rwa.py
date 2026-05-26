@@ -703,11 +703,7 @@ def format_upload_template(input_df):
     Adds the fixed upload stub columns, derives a single Account number from the
     SA/AA account numbers per RWA Calc type (defaulting missing ones), adds the
     month placeholder columns, drops the now-redundant SA/AA account columns and
-    reorders to the upload layout.
-
-    NOTE: col_order and the Month-placeholder interleaving are transcribed from
-    the production template (image 4). They are PROVISIONAL here — confirm the
-    exact order/columns before relying on the upload file downstream.
+    reorders to the production upload layout.
     """
     input_df = input_df.copy()
 
@@ -756,27 +752,29 @@ def format_upload_template(input_df):
     input_df = input_df.drop(columns=[SA_ACCOUNT_NUM, AA_ACCOUNT_NUM])
     input_df = input_df.rename(columns={0: "RWA Actuals"})
 
-    # PROVISIONAL column order — confirm against the production template (image 4).
+    # Column order transcribed from the production upload template: RWA Actuals
+    # sits near the front; the quarter value columns (1-7) are interleaved with
+    # the Month placeholders; Comment / RWA Exposure Type / Markets Filter trail
+    # at the end.
     col_order = [
+        REPORTING_LAYER,
+        MANAGED_SEGMENT_L2_DESCR,
+        MANAGED_SEGMENT_L3_DESCR,
+        RWA_CALC,
+        PMF_ACCOUNT_L5_DESCR,
+        "RWA Actuals",
         "FileType",
         MANAGED_SEGMENT_L4_DESCR,
-        MANAGED_SEGMENT_L3_DESCR,
-        MANAGED_SEGMENT_L2_DESCR,
-        PMF_ACCOUNT_L5_DESCR,
-        "Comment",
-        RWA_EXPOSURE_TYPE,
-        "Entity",
-        REPORTING_LAYER,
-        "PUG",
-        "Account",
-        RWA_CALC,
         "ManagedGeo",
+        "PUG",
         "FrsBu",
         "CustomerSegment",
         "Product",
+        "Entity",
         "Affiliate",
         "Project",
         "TransactionId",
+        "Account",
         "BalanceType",
         "Currency",
         "Layer",
@@ -784,9 +782,17 @@ def format_upload_template(input_df):
         "MDRM",
         "ReasonCode",
         "Comments",
-        "RWA Actuals",
-        1, 2, 3, 4, 5, 6, 7,
-    ] + MONTHLY
+        1, "Month1", "Month2",
+        2, "Month4", "Month5",
+        3, "Month7", "Month8",
+        4, "Month10", "Month11",
+        5, "Month13", "Month14",
+        6,
+        7,
+        "Comment",
+        RWA_EXPOSURE_TYPE,
+        MARKETS_FILTER,
+    ]
 
     input_df = input_df[[c for c in col_order if c in input_df.columns]]
     input_df = input_df.sort_values([MANAGED_SEGMENT_L2_DESCR, MANAGED_SEGMENT_L3_DESCR])
