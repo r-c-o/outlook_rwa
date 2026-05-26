@@ -36,22 +36,27 @@ def assign_quarter_id(outlook_df, quarter_id_mapping):
     )
 
 
-def calculate_sa_rwa(df):
-    multipliers = [
-        df[SA_RWF],
-        df["SA RWF_key2"],
-        df["SA RWF_key3"],
-        df["SA RWF_key4"],
-        df["SA RWF_key5"],
-    ]
-    # first non-null multiplier
-    df["FINAL_SA_RWF"] = (
-        df[SA_RWF]
-        .combine_first(df["SA RWF_key2"])
-        .combine_first(df["SA RWF_key3"])
-        .combine_first(df["SA RWF_key4"])
-        .combine_first(df["SA RWF_key5"])
+def _first_valid_rwf(df, cols):
+    """Return the first non-null, non-zero RWF value across the provided columns."""
+    return (
+        df[cols]
+        .apply(pd.to_numeric, errors="coerce")
+        .replace(0, np.nan)
+        .bfill(axis=1)
+        .iloc[:, 0]
     )
+
+
+def calculate_sa_rwa(df):
+    rwf_columns = [
+        SA_RWF,
+        "SA RWF_key2",
+        "SA RWF_key3",
+        "SA RWF_key4",
+        "SA RWF_key5",
+    ]
+    # first non-null, non-zero multiplier
+    df["FINAL_SA_RWF"] = _first_valid_rwf(df, rwf_columns)
     df[SA_RWA] = np.where(
         df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
         0,
@@ -60,21 +65,15 @@ def calculate_sa_rwa(df):
 
 
 def calculate_aa_rwa(df):
-    multipliers = [
-        df[AA_RWF],
-        df["AA RWF_key2"],
-        df["AA RWF_key3"],
-        df["AA RWF_key4"],
-        df["AA RWF_key5"],
+    rwf_columns = [
+        AA_RWF,
+        "AA RWF_key2",
+        "AA RWF_key3",
+        "AA RWF_key4",
+        "AA RWF_key5",
     ]
-    # first non-null multiplier
-    df["FINAL_AA_RWF"] = (
-        df[AA_RWF]
-        .combine_first(df["AA RWF_key2"])
-        .combine_first(df["AA RWF_key3"])
-        .combine_first(df["AA RWF_key4"])
-        .combine_first(df["AA RWF_key5"])
-    )
+    # first non-null, non-zero multiplier
+    df["FINAL_AA_RWF"] = _first_valid_rwf(df, rwf_columns)
     df[AA_RWA] = np.where(
         df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
         0,

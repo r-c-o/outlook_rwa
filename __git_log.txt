@@ -1,0 +1,34 @@
+CMD: git status --short
+RC: 0
+ M .gitignore
+ M src/main/tools/step1_model_convergence.py
+?? __do_git.py
+?? __git_tmp.txt
+
+---
+CMD: git log --oneline -5
+RC: 0
+a1e6cc2 Fix Int64 dtype compat; add backup paths for data_dir, schema_csv, step1_dir
+a79801b Fix str/float TypeError in division ops; move output_dir definition up; add parquet schema coercion
+f1f7788 read parquet
+dd1350e Refactor step2, fix mock data and pipeline bugs
+96c6834 updated scripts in tool
+
+---
+CMD: git add src/main/tools/step1_model_convergence.py config.toml
+RC: 0
+warning: in the working copy of 'src/main/tools/step1_model_convergence.py', LF will be replaced by CRLF the next time Git touches it
+
+---
+CMD: git commit -m Fix Int64 dtype compat in astype; add backup paths for data_dir and schema_registry_csv
+RC: 0
+[master f5f9df6] Fix Int64 dtype compat in astype; add backup paths for data_dir and schema_registry_csv
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+---
+CMD: git push origin master
+RC: 0
+To https://github.com/r-c-o/outlook_rwa.git
+   a1e6cc2..f5f9df6  master -> master
+
+---
