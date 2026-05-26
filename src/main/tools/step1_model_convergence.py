@@ -35,6 +35,7 @@ from functions import (
 from parallel_excel_to_parquet import (
     load_schema_registry_from_csv,
     convert_files_to_parquet,
+    export_outputs,
     ExcelInputSpec,
 )
 from constants import (
@@ -462,13 +463,4 @@ output_files = {
     config["outputs"]["step1"][0]["cbna_addon_non_waterfall_rwa"]: cbna_addon_non_waterfall_rwa,
 }
 
-for fname, df in output_files.items():
-    schema = {
-        col: str(dtype).lower()
-        for dataset, dtype_dict in schema_registry.items()
-        for col, dtype in dtype_dict.items()
-        if col in df.columns
-    }
-    out_path = output_dir / fname
-    df.to_excel(out_path, index=False)
-    print(f"✅ Written: {fname}  ({len(df):,} rows)")
+export_outputs(output_files, output_dir)

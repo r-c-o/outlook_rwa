@@ -89,3 +89,36 @@ def convert_files_to_parquet(
         for future in as_completed(futures):
             result = future.result()
             print(result)
+
+
+def _write_dataframe(df: pd.DataFrame, path: Path) -> str:
+    if path.suffix == ".parquet":
+        df.to_parquet(path, compression="zstd", index=False)
+    else:
+        df.to_excel(path, index=False)
+    return f"✅ Written: {path.name}  ({len(df):,} rows)"
+
+
+def export_outputs(
+    outputs: Dict[str, pd.DataFrame],
+    output_dir: Path,
+    formats=("xlsx", "parquet"),
+    max_workers: int | None = None,
+) -> None:
+    """Write each {name: DataFrame} to output_dir in every requested format, in parallel.
+
+    `name` may carry an extension (e.g. 'cg_outlook.xlsx'); it is replaced by each
+    format's extension, so the same data is written as both .xlsx and .parquet.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tasks = [
+        (df, output_dir / f"{Path(name).stem}.{ext.lstrip('.')}")
+        for name, df in outputs.items()
+        for ext in formats
+    ]
+    effective_workers = max_workers or len(tasks)
+    with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+        futures = [executor.submit(_write_dataframe, df, path) for df, path in tasks]
+        for future in as_completed(futures):
+            print(future.result())
