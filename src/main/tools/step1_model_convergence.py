@@ -358,7 +358,7 @@ cg_adjustments["Key1"] = (
 )
 
 cg_outlook = pd.merge(
-    cg_ou       tlook,
+    cg_outlook,
     cg_adjustments[[
         "Key1", "Key2", "Key3", "Key4", "Key5",
         "SA RWA", "AA RWA", "ERBA RWA",
