@@ -44,12 +44,28 @@ def _convert_spec_to_parquet(
         return f"⏭  Skipped (exists): {spec.output_name}"
 
     schema_map = registry.get(spec.schema_key, {})
-    dtype_map = {col: dtype for col, dtype in schema_map.items()}
+
+    # polars selects sheets by name (str) or 1-based sheet_id (int); the spec's
+    # int sheet_name is a 0-based positional index, None means the first sheet.
+    if isinstance(spec.sheet_name, bool):
+        raise TypeError(f"sheet_name must be str/int/None, got bool for {spec.output_name}")
+    elif isinstance(spec.sheet_name, str):
+        sheet_kwargs = {"sheet_name": spec.sheet_name}
+    elif isinstance(spec.sheet_name, int):
+        sheet_kwargs = {"sheet_id": spec.sheet_name + 1}
+    else:
+        sheet_kwargs = {}
+
+    # Only override dtypes for columns actually present; polars raises if
+    # schema_overrides references a column missing from the sheet.
+    pandas_sheet = 0 if spec.sheet_name is None else spec.sheet_name
+    present = pd.read_excel(spec.path, sheet_name=pandas_sheet, nrows=0).columns
+    dtype_map = {col: dtype for col, dtype in schema_map.items() if col in present}
 
     df = pl.read_excel(
         spec.path,
-        sheet_name=spec.sheet_name,
         schema_overrides=dtype_map,
+        **sheet_kwargs,
     )
     df.write_parquet(out_path, compression="zstd")
     return f"✅ Written: {spec.output_name}  ({len(df):,} rows)"
