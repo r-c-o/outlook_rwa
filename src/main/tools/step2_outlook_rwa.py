@@ -39,10 +39,15 @@ from constants import (
     BANKING_L2,
     WEALTH_L2,
     SERVICES_L2,
+    REPORTABLE_ENTITY_IS_CG,
+    REPORTABLE_ENTITY_IS_CBNA,
+    ADV_CG_TOTAL_RWA_AMT,
+    ADV_CBNA_TOTAL_RWA_AMT,
 )
 from parallel_excel_to_parquet import (
     load_schema_registry_from_csv,
     load_spec_with_fallback,
+    make_input_specs,
     ExcelInputSpec,
 )
 from functions import load_config
@@ -151,16 +156,20 @@ print(f"[0c]:            {output_dir}")
 
 # --- Input dataset specs: parquet-first load with Excel fallback ---
 # Raw mapping/adjustment inputs cache their parquet in input_dir; step1 outputs
-# already carry parquet alongside their xlsx in model_convergence_dir.
+# (incl. the convergence parquet) already carry parquet alongside their xlsx in
+# model_convergence_dir. The adjustments + convergence specs are reused from the
+# shared factory so step1 and step2 reference one definition of each source file.
+shared = make_input_specs(input_dir)
 input_specs = [
-    (ExcelInputSpec("cg_adjustments",   adjustments_file, "adjustments", "adjustments_cg.parquet",   "Adjustments - CG"),   input_dir),
-    (ExcelInputSpec("cbna_adjustments", adjustments_file, "adjustments", "adjustments_cbna.parquet", "Adjustments - CBNA"), input_dir),
-    (ExcelInputSpec("pug",              pug_file,         "pug",         "pug_mapping.parquet"),                            input_dir),
-    (ExcelInputSpec("pmf_rwa_mapping",  pmf_mapping_file, "pmf",         "pmf_rwa_mapping.parquet",  "Sheet1"),             input_dir),
-    (ExcelInputSpec("cg_outlook",       cg_outlook_file,   "outlook",    "cg_outlook.parquet"),                             model_convergence_dir),
-    (ExcelInputSpec("cbna_outlook",     cbna_outlook_file, "outlook",    "cbna_outlook.parquet"),                           model_convergence_dir),
-    (ExcelInputSpec("addon_all_cg",     cg_addon_file,     "addon",      "addon_all_cg.parquet"),                           model_convergence_dir),
-    (ExcelInputSpec("addon_all_cbna",   cbna_addon_file,   "addon",      "addon_all_cbna.parquet"),                         model_convergence_dir),
+    (shared["cg_adjustments"],   input_dir),
+    (shared["cbna_adjustments"], input_dir),
+    (ExcelInputSpec("pug",             pug_file,         "pug", "pug_mapping.parquet"),                input_dir),
+    (ExcelInputSpec("pmf_rwa_mapping", pmf_mapping_file, "pmf", "pmf_rwa_mapping.parquet", "Sheet1"),  input_dir),
+    (shared["convergence"],      model_convergence_dir),
+    (ExcelInputSpec("cg_outlook",     cg_outlook_file,   "outlook", "cg_outlook.parquet"),     model_convergence_dir),
+    (ExcelInputSpec("cbna_outlook",   cbna_outlook_file, "outlook", "cbna_outlook.parquet"),   model_convergence_dir),
+    (ExcelInputSpec("addon_all_cg",   cg_addon_file,     "addon",   "addon_all_cg.parquet"),   model_convergence_dir),
+    (ExcelInputSpec("addon_all_cbna", cbna_addon_file,   "addon",   "addon_all_cbna.parquet"), model_convergence_dir),
 ]
 
 # --- Data Quality Check: each dataset needs its parquet OR its source Excel ---
@@ -179,6 +188,7 @@ loaded = [load_spec_with_fallback(spec, parquet_dir, registry) for spec, parquet
     src_cbna_adjustments,
     src_pug,
     src_rwa_pmf_mapping,
+    src_convergence,
     src_cg_outlook,
     src_cbna_outlook,
     src_addon_all_cg,
@@ -189,6 +199,7 @@ cg_adjustments   = src_cg_adjustments.copy(deep=True)
 cbna_adjustments = src_cbna_adjustments.copy(deep=True)
 pug_df           = src_pug.copy(deep=True)
 rwa_pmf_mapping  = src_rwa_pmf_mapping.copy(deep=True)
+convergence      = src_convergence.copy(deep=True)
 cg_outlook       = src_cg_outlook.copy(deep=True)
 cbna_outlook     = src_cbna_outlook.copy(deep=True)
 addon_all_cg     = src_addon_all_cg.copy(deep=True)
@@ -196,6 +207,7 @@ addon_all_cbna   = src_addon_all_cbna.copy(deep=True)
 
 print(f"CG Adjustments rows:   {len(cg_adjustments):,}")
 print(f"CBNA Adjustments rows: {len(cbna_adjustments):,}")
+print(f"Convergence rows:      {len(convergence):,}")
 print(f"PUG/PMF Mapping rows:  {len(pug_df):,}")
 print(f"CG outlook rows:       {len(cg_outlook):,}")
 print(f"CBNA outlook rows:     {len(cbna_outlook):,}")
@@ -209,20 +221,19 @@ print(f"CBNA addon rows:       {len(addon_all_cbna):,}")
 # Run Cell | Run Above | Debug Cell
 
 def format_adjustments(input_df):
-    """Coerce numeric columns and format adjustment data.
-
-    Args:
-        input_df: Raw adjustments DataFrame.
-
-    Returns:
-        Formatted DataFrame with numeric columns coerced.
-    """
-    numeric_cols = input_df.select_dtypes(include='number').columns
-    for c in numeric_cols:
+    """Coerce RWF/Balances columns to numeric, then fill NaN (0 numeric, 'N/A' text)."""
+    cols_to_num = ['Balances', 'SA RWF', 'AA RWF', 'SA RWF_key2', 'AA RWF_key2',
+                   'SA RWF_key3', 'AA RWF_key3', 'SA RWF_key4', 'AA RWF_key4',
+                   'SA RWF_key5', 'AA RWF_key5']
+    for c in cols_to_num:
         if c in input_df.columns:
             input_df[c] = pd.to_numeric(input_df[c], errors='coerce')
 
-    string_cols = input_df.select_dtypes(include='object').columns  # noqa: F841
+    numeric_cols = input_df.select_dtypes(include=['number']).columns
+    input_df[numeric_cols] = input_df[numeric_cols].fillna(0)
+
+    string_cols = input_df.select_dtypes(include=['object']).columns
+    input_df[string_cols] = input_df[string_cols].fillna('N/A')
 
     return input_df
 
@@ -239,45 +250,40 @@ print(f"CBNA adjustments formatted: {len(cbna_adjustments_formatted):,} rows")
 # %%
 # Run Cell | Run Above | Debug Cell
 
-def rename_addon_columns(input_df):
-    """Rename convergence-schema column names to balance-sheet-style short names.
+def rename_addon_columns(input_df, entity):
+    """Rename convergence-style addon columns to outlook-style short names.
 
-    Addon data uses long convergence column names; outlook data uses short
-    balance-sheet-style names. Renames so they can be concatenated.
+    `entity` ('CG'/'CBNA') selects which Adv. RWA column maps to AA RWA, so the
+    CBNA addon's AA RWA is sourced from its own column rather than CG's.
 
-    When the addon frame contains both the long-form source column and the
-    short-form target column (because step1 concatenates credit-risk and
-    non-waterfall frames that each carry different column sets), the existing
-    short-form column is dropped first so the rename does not create duplicates.
-
-    Args:
-        input_df: Addon DataFrame with convergence-style column names.
-
-    Returns:
-        DataFrame with renamed columns matching outlook schema, no duplicates.
+    step1 pre-creates partial short columns (SA RWA / RWA Exposure Type) on the
+    addon frame; those collide with the long->short rename, so the partial
+    copies are dropped first and the fully-populated convergence columns take
+    their place. Quarter Id is intentionally not renamed (it already matches),
+    so it survives into the downstream concat.
     """
+    adv_col = f'Adv. {entity.upper()} Total RWA Amount with 1.06 Multiplier'
     rename_dict = {
-        "Managed Segment Level 4 Description": MANAGED_SEGMENT_L4_DESCR,
-        "Managed Segment Level 3 Description": MANAGED_SEGMENT_L3_DESCR,
-        "Managed Segment Level 2 Description": MANAGED_SEGMENT_L2_DESCR,
-        "Managed Geography Level 3 Description": MANAGED_GEOGRAPHY_L3_DESCR,
-        "Finance PMF Level 5 Description": PMF_ACCOUNT_L5_DESCR,
-        "SA RWA Amount": SA_RWA,
-        "Adv. CG Total RWA Amount with 1.06 Multiplier": AA_RWA,
-        "Quarter Id": QUARTER_ID,
-        "RWA Exposure Type Description": RWA_EXPOSURE_TYPE,
-        "Comments": "Comment",
+        adv_col: AA_RWA,
+        'Managed Segment Level 4 Description': MANAGED_SEGMENT_L4_DESCR,
+        'Managed Segment Level 3 Description': MANAGED_SEGMENT_L3_DESCR,
+        'Managed Segment Level 2 Description': MANAGED_SEGMENT_L2_DESCR,
+        'Managed Geography Level 4 Description': 'Managed Geography L4 Descr',
+        'Managed Geography Level 3 Description': MANAGED_GEOGRAPHY_L3_DESCR,
+        'Finance PMF Level 5 Description': PMF_ACCOUNT_L5_DESCR,
+        'SA RWA Amount': SA_RWA,
+        'Managed Segment Level 2 Code': 'Managed Segment L2 Id',
+        'Managed Segment Level 4 Code': 'Managed Segment L4 Id',
+        'Managed Segment Level 3 Code': 'Managed Segment L3 Id',
+        'RWA Exposure Type Description': RWA_EXPOSURE_TYPE,
     }
-    # Only rename columns that actually exist in the frame
     rename_dict = {k: v for k, v in rename_dict.items() if k in input_df.columns}
-    # Drop any pre-existing target columns that would collide with the rename
-    cols_to_drop = [v for v in rename_dict.values() if v in input_df.columns]
-    df = input_df.drop(columns=cols_to_drop)
-    return df.rename(columns=rename_dict)
+    collisions = [v for v in rename_dict.values() if v in input_df.columns]
+    return input_df.drop(columns=collisions).rename(columns=rename_dict)
 
 
-addon_all_cg   = rename_addon_columns(addon_all_cg)
-addon_all_cbna = rename_addon_columns(addon_all_cbna)
+addon_all_cg   = rename_addon_columns(addon_all_cg, 'CG')
+addon_all_cbna = rename_addon_columns(addon_all_cbna, 'CBNA')
 
 print(f"CG addon columns renamed")
 print(f"CBNA addon columns renamed")
@@ -288,27 +294,19 @@ print(f"CBNA addon columns renamed")
 # %%
 # Run Cell | Run Above | Debug Cell
 
-def filter_out_discontinued_ops(input_df):
-    """Filter out rows where Managed Segment L2 == Discontinued Ops.
+# Production does NOT drop discontinued-ops rows here; they flow through to the
+# upload template and are only excluded inside the convergence control summary.
+# def filter_out_discontinued_ops(input_df):
+#     """Filter out rows where Managed Segment L2 == Discontinued Ops."""
+#     return input_df[input_df[MANAGED_SEGMENT_L2_DESCR] != DISCONTINUED_OPS_L2].copy()
+#
+# cg_outlook   = filter_out_discontinued_ops(cg_outlook)
+# cbna_outlook = filter_out_discontinued_ops(cbna_outlook)
+# addon_all_cg   = filter_out_discontinued_ops(addon_all_cg)
+# addon_all_cbna = filter_out_discontinued_ops(addon_all_cbna)
 
-    Args:
-        input_df: DataFrame with MANAGED_SEGMENT_L2_DESCR column.
-
-    Returns:
-        Filtered DataFrame with discontinued ops rows removed.
-    """
-    return input_df[input_df[MANAGED_SEGMENT_L2_DESCR] != DISCONTINUED_OPS_L2].copy()
-
-
-# Filter discontinued ops
-cg_outlook   = filter_out_discontinued_ops(cg_outlook)
-cbna_outlook = filter_out_discontinued_ops(cbna_outlook)
-
-addon_all_cg   = filter_out_discontinued_ops(addon_all_cg)
-addon_all_cbna = filter_out_discontinued_ops(addon_all_cbna)
-
-print(f"CG outlook after filtering discontinued ops:   {len(cg_outlook):,} rows")
-print(f"CBNA outlook after filtering discontinued ops: {len(cbna_outlook):,} rows")
+print(f"CG outlook rows:   {len(cg_outlook):,}")
+print(f"CBNA outlook rows: {len(cbna_outlook):,}")
 
 # %% [markdown]
 # ## 5. Rename PMF Mapping Columns & Data Quality Checks
@@ -571,6 +569,14 @@ def format_columns_before_pivots(input_df):
     input_df[SA_RWA]   = pd.to_numeric(input_df[SA_RWA],   errors='coerce')
     input_df[AA_RWA]   = pd.to_numeric(input_df[AA_RWA],   errors='coerce')
     input_df[ERBA_RWA] = pd.to_numeric(input_df[ERBA_RWA], errors='coerce')
+
+    # Fill NaN pivot-key strings with 'None' so group-by/pivot does not drop
+    # NaN-keyed rows (which would empty the upload template).
+    for col in [MANAGED_SEGMENT_L4_DESCR, MANAGED_SEGMENT_L3_DESCR, MANAGED_SEGMENT_L2_DESCR,
+                PMF_ACCOUNT_L5_DESCR, 'Entity', REPORTING_LAYER,
+                SA_ACCOUNT_NUM, AA_ACCOUNT_NUM, 'PUG']:
+        if col in input_df.columns:
+            input_df[col] = input_df[col].fillna('None')
     return input_df
 
 
@@ -604,10 +610,9 @@ def create_markets_filter(input_df):
     return input_df
 
 
-cg_frm_output   = create_markets_filter(frm_output_cg)
-cbna_frm_output = create_markets_filter(frm_output_cbna)
-
-print(f"Markets filter applied!")
+# Markets filter is applied after the pivots (see below) to mirror production's
+# ordering. It only adds a column (never drops rows) and that column is dropped
+# at template formatting, so the ordering has no effect on the output numbers.
 
 # %% [markdown]
 # ## Create Upload Template Pivots (ERBA, AA, SA)
@@ -628,6 +633,10 @@ def create_upload_template_pivots(input_df):
         Concatenated DataFrame of ERBA, AA, SA pivots with RWA_CALC set.
     """
     input_df = input_df.copy()
+    input_df = input_df.fillna(0)
+    # Integer quarter labels so the downstream integer-label reorder/rename/agg
+    # match regardless of any float coercion upstream.
+    input_df[QUARTER_ID] = pd.to_numeric(input_df[QUARTER_ID], errors="coerce").fillna(0).astype(int)
 
     pivot_index = [
         MANAGED_SEGMENT_L4_DESCR,
@@ -658,6 +667,7 @@ def create_upload_template_pivots(input_df):
         for i in range(8):
             if i not in pivot.columns:
                 pivot[i] = 0
+        pivot = pivot[pivot_index + [1, 2, 3, 4, 5, 6, 7, 0]]
         pivot[RWA_CALC] = rwa_label
         return pivot
 
@@ -671,8 +681,12 @@ def create_upload_template_pivots(input_df):
     return pivots
 
 
-cg_frm_output   = create_upload_template_pivots(cg_frm_output)
-cbna_frm_output = create_upload_template_pivots(cbna_frm_output)
+cg_frm_output   = create_upload_template_pivots(frm_output_cg)
+cbna_frm_output = create_upload_template_pivots(frm_output_cbna)
+
+# Markets filter (inert) — applied after pivots to mirror production ordering.
+cg_frm_output   = create_markets_filter(cg_frm_output)
+cbna_frm_output = create_markets_filter(cbna_frm_output)
 
 print(f"CG pivot rows:   {len(cg_frm_output):,}")
 print(f"CBNA pivot rows: {len(cbna_frm_output):,}")
@@ -684,46 +698,65 @@ print(f"CBNA pivot rows: {len(cbna_frm_output):,}")
 # Run Cell | Run Above | Debug Cell
 
 def format_upload_template(input_df):
-    """Add required upload stub columns and reorder for upload.
+    """Add upload stub columns, derive the Account number, and reorder for upload.
 
-    Adds FileType='R', ManagedGeo='', FrsBu='', Product='', Affiliate='',
-    ProjectAccount='000000', and monthly placeholder columns (Month1-Month8).
-    Fills default SA/AA account numbers where missing and reorders columns.
+    Adds the fixed upload stub columns, derives a single Account number from the
+    SA/AA account numbers per RWA Calc type (defaulting missing ones), adds the
+    month placeholder columns, drops the now-redundant SA/AA account columns and
+    reorders to the upload layout.
 
-    Args:
-        input_df: DataFrame with all RWA and segment columns populated.
-
-    Returns:
-        input_df with required upload columns added and reordered.
+    NOTE: col_order and the Month-placeholder interleaving are transcribed from
+    the production template (image 4). They are PROVISIONAL here — confirm the
+    exact order/columns before relying on the upload file downstream.
     """
     input_df = input_df.copy()
 
-    # Add required upload columns
-    input_df["FileType"]       = "R"
-    input_df["ManagedGeo"]     = ""
-    input_df["FrsBu"]          = ""
-    input_df["Product"]        = ""
-    input_df["Affiliate"]      = ""
-    input_df["ProjectAccount"] = "000000"
+    numeric_cols = input_df.select_dtypes(include=['number']).columns
+    input_df[numeric_cols] = input_df[numeric_cols].fillna(0)
 
-    # Monthly placeholder columns (Month1-Month8)  # TODO: verify exact count from source
-    MONTHLY = ["Month1", "Month2", "Month3", "Month4", "Month5", "Month6", "Month7", "Month8"]
-    for m in MONTHLY:
-        input_df[m] = ""
+    # Fixed upload stub columns
+    input_df["FileType"]        = "R"
+    input_df["ManagedGeo"]      = ""
+    input_df["FrsBu"]           = ""
+    input_df["CustomerSegment"] = ""
+    input_df["Product"]         = ""
+    input_df["Affiliate"]       = "00000"
+    input_df["Project"]         = ""
+    input_df["TransactionId"]   = ""
+    input_df["BalanceType"]     = "EOP"
+    input_df["Currency"]        = "USD"
+    input_df["Layer"]           = ""
+    input_df["ModelId"]         = ""
+    input_df["MDRM"]            = ""
+    input_df["ReasonCode"]      = ""
+    input_df["Comments"]        = ""
 
-    # Fill default Account numbers where missing
-    input_df[SA_ACCOUNT_NUM] = np.where(
-        (input_df[RWA_CALC] == "AA") & (input_df[AA_ACCOUNT_NUM].isna()),
+    # Account: AA -> AA account #, SA -> SA account #, otherwise N/A
+    input_df["Account"] = np.where(
+        input_df[RWA_CALC] == "AA",
         input_df[AA_ACCOUNT_NUM],
-        input_df[SA_ACCOUNT_NUM],
+        np.where(input_df[RWA_CALC] == "SA", input_df[SA_ACCOUNT_NUM], "N/A"),
+    )
+    # Default account numbers where the PMF mapping was missing ('None')
+    input_df["Account"] = np.where(
+        (input_df[RWA_CALC] == "AA") & (input_df["Account"] == "None"),
+        "664062", input_df["Account"],
+    )
+    input_df["Account"] = np.where(
+        (input_df[RWA_CALC] == "SA") & (input_df["Account"] == "None"),
+        "663722", input_df["Account"],
     )
 
-    # Fill SA/AA account numbers where missing with default values
-    input_df[SA_ACCOUNT_NUM] = input_df[SA_ACCOUNT_NUM].fillna("563722")  # TODO: verify from source
-    input_df[AA_ACCOUNT_NUM] = input_df[AA_ACCOUNT_NUM].fillna("563722")  # TODO: verify from source
+    # Month placeholder columns (quarter-end values live in the integer columns)
+    MONTHLY = ["Month1", "Month2", "Month4", "Month5", "Month7", "Month8",
+               "Month10", "Month11", "Month13", "Month14"]
+    for m in MONTHLY:
+        input_df[m] = 0
 
-    # Drop SA/AA Account columns  # TODO: verify exact drop logic from source
-    # Column ordering
+    input_df = input_df.drop(columns=[SA_ACCOUNT_NUM, AA_ACCOUNT_NUM])
+    input_df = input_df.rename(columns={0: "RWA Actuals"})
+
+    # PROVISIONAL column order — confirm against the production template (image 4).
     col_order = [
         "FileType",
         MANAGED_SEGMENT_L4_DESCR,
@@ -734,18 +767,29 @@ def format_upload_template(input_df):
         RWA_EXPOSURE_TYPE,
         "Entity",
         REPORTING_LAYER,
-        SA_ACCOUNT_NUM,
-        AA_ACCOUNT_NUM,
         "PUG",
+        "Account",
         RWA_CALC,
         "ManagedGeo",
         "FrsBu",
+        "CustomerSegment",
         "Product",
         "Affiliate",
-        "ProjectAccount",
+        "Project",
+        "TransactionId",
+        "BalanceType",
+        "Currency",
+        "Layer",
+        "ModelId",
+        "MDRM",
+        "ReasonCode",
+        "Comments",
+        "RWA Actuals",
+        1, 2, 3, 4, 5, 6, 7,
     ] + MONTHLY
 
     input_df = input_df[[c for c in col_order if c in input_df.columns]]
+    input_df = input_df.sort_values([MANAGED_SEGMENT_L2_DESCR, MANAGED_SEGMENT_L3_DESCR])
     return input_df
 
 
@@ -782,66 +826,52 @@ print(f"Exported: {output_cbna_raw_data_filename_path}")
 # %%
 # Run Cell | Run Above | Debug Cell
 
-def build_frm_control(frm_output):
-    """Build FRM convergence control totals by groupby aggregation.
+def build_convergence_control(convergence_df, entity_filter_col, adv_rwa_col):
+    """Summarise convergence SA/AA RWA by L2 segment x quarter for the control file.
 
-    Aggregates RWA amounts by segment, quarter, and RWA calc type.
-    Filters out Discontinued Ops rows from the control summary.
-
-    Args:
-        frm_output: DataFrame with RWA amount columns and segment descriptors.
-
-    Returns:
-        Summary DataFrame of control totals.
+    Filters to the entity (CG/CBNA), excludes Discontinued Ops, then melts SA/AA
+    into an RWA Calc dimension and pivots quarters across the columns.
     """
-    ctrl = frm_output.groupby(
-        [MANAGED_SEGMENT_L2_DESCR, MANAGED_SEGMENT_L3_DESCR, QUARTER_ID],
-        dropna=False,
-    ).agg(
-        **{
-            SA_RWA:   (SA_RWA,   "sum"),
-            AA_RWA:   (AA_RWA,   "sum"),
-            ERBA_RWA: (ERBA_RWA, "sum"),
-        }
-    ).reset_index()
-
-    ctrl = ctrl[ctrl[MANAGED_SEGMENT_L2_DESCR] != DISCONTINUED_OPS_L2]
-
-    add_rwa_calc = ctrl.copy()
-    add_rwa_calc[RWA_CALC] = "AA"
-    ctrl[RWA_CALC] = "SA"
-    ctrl = pd.concat([ctrl, add_rwa_calc])
-
+    MNGED = "Managed Segment Level 2 Description"
+    ctrl = convergence_df[convergence_df[entity_filter_col] == "Y"].copy()
+    ctrl = ctrl[ctrl[MNGED] != DISCONTINUED_OPS_L2]
+    ctrl = ctrl.rename(columns={adv_rwa_col: AA_RWA, "SA RWA Amount": SA_RWA,
+                                MNGED: MANAGED_SEGMENT_L2_DESCR})
+    ctrl = ctrl.groupby([MANAGED_SEGMENT_L2_DESCR, QUARTER_ID]).agg(
+        {SA_RWA: "sum", AA_RWA: "sum"}).reset_index()
+    ctrl = ctrl.melt(id_vars=[MANAGED_SEGMENT_L2_DESCR, QUARTER_ID],
+                     value_name="Month", var_name=RWA_CALC)
+    ctrl = ctrl.pivot_table(index=[MANAGED_SEGMENT_L2_DESCR, RWA_CALC],
+                            columns=QUARTER_ID, values="Month", aggfunc="sum").reset_index()
     ctrl.columns.name = None
     return ctrl
 
 
-def build_raw_data_control(raw_data):
-    """Build raw data control totals by groupby aggregation.
+def build_frm_control(frm_output_df):
+    """Summarise the formatted upload template by L2 segment x RWA calc type.
 
-    Args:
-        raw_data: Raw DataFrame before pivot transformations.
-
-    Returns:
-        Summary DataFrame of raw data control totals.
+    Sums the quarter columns (1-7) and the actuals column, mapping the AA/SA
+    pivot labels to the canonical RWA names and dropping ERBA.
     """
-    ctrl = raw_data.groupby(
-        [MANAGED_SEGMENT_L2_DESCR, MANAGED_SEGMENT_L3_DESCR, QUARTER_ID],
-        dropna=False,
-    ).agg(
-        **{
-            SA_RWA: (SA_RWA, "sum"),
-            AA_RWA: (AA_RWA, "sum"),
-        }
-    ).reset_index()
+    ctrl = frm_output_df.groupby([MANAGED_SEGMENT_L2_DESCR, RWA_CALC]).agg(
+        {"RWA Actuals": "sum", 1: "sum", 2: "sum", 3: "sum", 4: "sum",
+         5: "sum", 6: "sum", 7: "sum"}).reset_index()
+    ctrl = ctrl.rename(columns={"RWA Actuals": 0})
+    ctrl[RWA_CALC] = ctrl[RWA_CALC].map({"AA": AA_RWA, "SA": SA_RWA})
+    ctrl = ctrl[ctrl[RWA_CALC].isin([AA_RWA, SA_RWA])]
+    return ctrl
 
-    ctrl = ctrl[ctrl[MANAGED_SEGMENT_L2_DESCR] != DISCONTINUED_OPS_L2]
 
-    add_rwa_calc = ctrl.copy()
-    add_rwa_calc[RWA_CALC] = "AA"
-    ctrl[RWA_CALC] = "SA"
-    ctrl = pd.concat([ctrl, add_rwa_calc])
-
+def build_raw_data_control(raw_data_df):
+    """Summarise raw data SA/AA RWA by L2 segment x quarter for the control file."""
+    ctrl = raw_data_df.copy()
+    ctrl[QUARTER_ID] = pd.to_numeric(ctrl[QUARTER_ID], errors="coerce")
+    ctrl = ctrl.groupby([MANAGED_SEGMENT_L2_DESCR, QUARTER_ID]).agg(
+        {SA_RWA: "sum", AA_RWA: "sum"}).reset_index()
+    ctrl = ctrl.melt(id_vars=[MANAGED_SEGMENT_L2_DESCR, QUARTER_ID],
+                     value_name="Month", var_name=RWA_CALC)
+    ctrl = ctrl.pivot_table(index=[MANAGED_SEGMENT_L2_DESCR, RWA_CALC],
+                            columns=QUARTER_ID, values="Month", aggfunc="sum").reset_index()
     ctrl.columns.name = None
     return ctrl
 
@@ -852,19 +882,14 @@ def build_raw_data_control(raw_data):
 # %%
 # Run Cell | Run Above | Debug Cell
 
-cg_frm_control        = build_frm_control(frm_output_cg)
-cbna_frm_control      = build_frm_control(frm_output_cbna)
+cg_convergence_control   = build_convergence_control(convergence, REPORTABLE_ENTITY_IS_CG,   ADV_CG_TOTAL_RWA_AMT)
+cbna_convergence_control = build_convergence_control(convergence, REPORTABLE_ENTITY_IS_CBNA, ADV_CBNA_TOTAL_RWA_AMT)
+
+cg_frm_control   = build_frm_control(cg_frm_output_full)
+cbna_frm_control = build_frm_control(cbna_frm_output_full)
+
 cg_raw_data_control   = build_raw_data_control(cg_raw_data)
 cbna_raw_data_control = build_raw_data_control(cbna_raw_data)
-
-# Convergence control — Total RWA Amount with 1.06 Multiplier
-cg_convergence_control   = build_frm_control(frm_output_cg)
-cbna_convergence_control = build_frm_control(frm_output_cbna)
-
-cg_frm_data_control   = build_raw_data_control(cg_raw_data)
-cbna_frm_data_control = build_raw_data_control(cbna_raw_data)
-
-cons_frm_control = build_frm_control(pd.concat([frm_output_cg, frm_output_cbna]))
 
 print(f"CG FRM control rows:   {len(cg_frm_control):,}")
 print(f"CBNA FRM control rows: {len(cbna_frm_control):,}")
@@ -920,11 +945,10 @@ with pd.ExcelWriter(output_control_file_path, engine="openpyxl") as writer:
     cbna_convergence_control.to_excel(writer, sheet_name="CBNA", startrow=start_row)
 
     # --- CG Raw Data Control sheet ---
-    start_row = 0
-    cg_frm_data_control.to_excel(writer, sheet_name="CG Raw Data Control", startrow=start_row)
+    cg_raw_data_control.to_excel(writer, sheet_name="CG Raw Data Control", startrow=0)
 
     # --- CBNA Raw Data Control sheet ---
-    cbna_frm_data_control.to_excel(writer, sheet_name="CBNA Raw Data Control", startrow=0)
+    cbna_raw_data_control.to_excel(writer, sheet_name="CBNA Raw Data Control", startrow=0)
 
     # --- Parameters sheet ---
     param_df.to_excel(writer, sheet_name="Parameters")
