@@ -433,16 +433,17 @@ cbna_addon_markets_credit_risk[SA_RWA] = cbna_addon_markets_credit_risk[SA_RWA_A
 assign_erba_rwa_and_metadata(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk)
 
 _pq_to_month = {1: "Mar", 2: "Jun", 3: "Sep", 4: "Dec"}
-for addon_df in [cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk]:
+for addon_df in [
+    cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
+    non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
+]:
     q_num = pd.to_numeric(addon_df["Projected Quarter"].str[0], errors="coerce").astype("Int64")
     addon_df["YEAR"] = pd.to_numeric(
         addon_df["Projected Quarter"].str[2:].apply(lambda x: "20" + x if pd.notna(x) else x),
         errors="coerce",
     ).astype("Int64")
     addon_df["Month"] = q_num.map(_pq_to_month)
-
-assign_quarter_id(cg_addon_markets_credit_risk, quarter_id_mapping)
-assign_quarter_id(cbna_addon_markets_credit_risk, quarter_id_mapping)
+    assign_quarter_id(addon_df, quarter_id_mapping)
 
 cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa = (
     pd.concat([non_credit_risk_non_waterfall_cg, cg_addon_markets_credit_risk], ignore_index=True),
