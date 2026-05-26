@@ -1,6 +1,6 @@
 [parameters]
 # Starting quarter of the projection horizon — "Month YYYY" format
-Q0 = "Mar 2025"
+Q0 = "Jun 2025"
 
 [paths]
 data_dir = "C:/Users/ryanc/projects/outlook_rwa/data"
