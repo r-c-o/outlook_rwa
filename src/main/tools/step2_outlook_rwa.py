@@ -13,7 +13,6 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 import warnings
 import numpy as np
 import pandas as pd
-import toml
 from pathlib import Path
 from datetime import datetime
 from constants import (
@@ -42,6 +41,7 @@ from constants import (
     SERVICES_L2,
 )
 from parallel_excel_to_parquet import load_schema_registry_from_csv
+from functions import load_config
 
 pd.set_option("display.max_columns", 500)
 
@@ -61,8 +61,7 @@ print(f"Run date: {run_datetime}")
 # PARAMETERS — Update these before running
 # =============================================================================
 
-config_path = Path(__file__).parent.parent.parent.parent / "config.toml"
-config = toml.load(config_path)
+config = load_config(Path(__file__).parent.parent.parent.parent)
 
 # Q0: Quarter-0 date (format: Mon_YYYY) — the actuals quarter
 Q0 = config["parameters"]["Q0"]

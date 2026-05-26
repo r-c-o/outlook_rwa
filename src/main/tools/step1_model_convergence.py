@@ -14,7 +14,6 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
-import toml
 from functions import (
     _int_str,
     assign_quarter_id,
@@ -31,6 +30,7 @@ from functions import (
     melt_quarterly_pivot,
     check_and_get_max_quarters,
     build_quarter_mappings,
+    load_config,
 )
 from parallel_excel_to_parquet import (
     load_schema_registry_from_csv,
@@ -77,8 +77,7 @@ pd.set_option("display.max_columns", 500)
 # =============================================================================
 
 # Load config
-config_path = Path(__file__).parent.parent.parent.parent / "config.toml"
-config = toml.load(config_path)
+config = load_config(Path(__file__).parent.parent.parent.parent)
 
 schema_csv = Path(config["paths"]["schema_registry_csv"])
 if not schema_csv.exists() and "schema_registry_csv_backup" in config["paths"]:
