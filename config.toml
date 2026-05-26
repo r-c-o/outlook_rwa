@@ -19,6 +19,8 @@ schema_registry_csv_backup = "/absolute/path/to/backup/src/main/tools/schema_reg
 [outputs]
 step1_dir = "/absolute/path/to/outlook_rwa/data/output/step1"
 step1_dir_backup = "/absolute/path/to/backup/output/step1"
+step2_dir = "/absolute/path/to/outlook_rwa/data/output/step2"
+step2_dir_backup = "/absolute/path/to/backup/output/step2"
 
 [[outputs.step1]]
 cg_outlook = "cg_outlook.xlsx"

@@ -102,13 +102,15 @@ input_cg_addon_filename      = config["outputs"]["step1"][0]["cg_addon_non_water
 input_cbna_addon_filename    = config["outputs"]["step1"][0]["cbna_addon_non_waterfall_rwa"]
 
 # Output Filenames
-output_cg_upload_full_filename    = f"CG_Upload_Template_Full.{run_datetime}.xlsx"
-output_cbna_upload_full_filename  = f"CBNA_Upload_Template_Full.{run_datetime}.xlsx"
-output_cg_raw_data_filename       = f"CG_RAW_DATA.{run_datetime}.xlsx"
-output_cbna_raw_data_filename     = f"CBNA_RAW_DATA.{run_datetime}.xlsx"
-output_control_filename           = f"control_file.{run_datetime}.xlsx"
+output_cg_upload_full_filename    = "CG_Upload_Template_Full.xlsx"
+output_cbna_upload_full_filename  = "CBNA_Upload_Template_Full.xlsx"
+output_cg_raw_data_filename       = "CG_RAW_DATA.xlsx"
+output_cbna_raw_data_filename     = "CBNA_RAW_DATA.xlsx"
+output_control_filename           = "control_file.xlsx"
 
-output_dir = Path(config["paths"]["data_dir"]).parent / "output" / run_datetime
+output_dir = Path(config["outputs"]["step2_dir"])
+if not output_dir.exists() and "step2_dir_backup" in config["outputs"]:
+    output_dir = Path(config["outputs"]["step2_dir_backup"])
 output_dir.mkdir(parents=True, exist_ok=True)
 
 print(f"Q0:                    {Q0}")
