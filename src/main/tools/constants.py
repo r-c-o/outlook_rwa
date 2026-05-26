@@ -215,7 +215,7 @@ NON_CREDIT_RISK_PMF = [
     "Other Liabilities (L2)",
     "Indirect Assets (L2)",
     "Premise and Equipment Net of Depreciation and Amortization (L2)",
-    "Other Assets (L2)",
+    "Other Assets L3",
 ]
 
 EXPECTED_BALANCESHEET_COLS = [
