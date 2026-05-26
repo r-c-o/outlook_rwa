@@ -64,11 +64,14 @@ def assign_quarter_id(outlook_df, quarter_id_mapping):
 
 
 def _first_valid_rwf(df, cols):
-    """Return the first non-null, non-zero RWF value across the provided columns."""
+    """Return the first present (non-null) RWF across cols; a present 0 is valid.
+
+    Only null/None/empty/non-numeric values (coerced to NaN) are skipped — a key
+    whose RWF is genuinely 0 is used as-is, matching production's waterfall.
+    """
     return (
         df[cols]
         .apply(pd.to_numeric, errors="coerce")
-        .replace(0, np.nan)
         .bfill(axis=1)
         .iloc[:, 0]
     )
@@ -82,7 +85,7 @@ def calculate_sa_rwa(df):
         "SA RWF_key4",
         "SA RWF_key5",
     ]
-    # first non-null, non-zero multiplier
+    # first present multiplier (a present 0 is used as-is; only null/empty skipped)
     df["FINAL_SA_RWF"] = _first_valid_rwf(df, rwf_columns)
     df[SA_RWA] = np.where(
         df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
@@ -99,7 +102,7 @@ def calculate_aa_rwa(df):
         "AA RWF_key4",
         "AA RWF_key5",
     ]
-    # first non-null, non-zero multiplier
+    # first present multiplier (a present 0 is used as-is; only null/empty skipped)
     df["FINAL_AA_RWF"] = _first_valid_rwf(df, rwf_columns)
     df[AA_RWA] = np.where(
         df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
