@@ -40,7 +40,11 @@ from constants import (
     WEALTH_L2,
     SERVICES_L2,
 )
-from parallel_excel_to_parquet import load_schema_registry_from_csv
+from parallel_excel_to_parquet import (
+    load_schema_registry_from_csv,
+    load_spec_with_fallback,
+    ExcelInputSpec,
+)
 from functions import load_config
 
 pd.set_option("display.max_columns", 500)
@@ -77,6 +81,12 @@ input_dir = data_dir / "input"
 input_adjustments_filename    = "adjustment_master_file.xlsx"
 input_pug_filename             = "pug_mapping.xlsx"
 input_pmf_rwa_mapping_filename = "pmf_rwa_mapping.xlsx"
+
+# Schema registry (drives dtype overrides when building parquet from Excel)
+schema_csv = Path(config["paths"]["schema_registry_csv"])
+if not schema_csv.exists() and "schema_registry_csv_backup" in config["paths"]:
+    schema_csv = Path(config["paths"]["schema_registry_csv_backup"])
+registry = load_schema_registry_from_csv(schema_csv)
 
 # =============================================================================
 # Map Model Convergence outputs to Input Filenames for Outlook
@@ -137,31 +147,41 @@ print(f"[0c]:            {output_dir}")
 # %%
 # Run Cell | Run Above | Debug Cell
 
-# --- Data Quality Check: verify files exist ---
-all_input_files = [
-    adjustments_file,
-    pug_file,
-    pmf_mapping_file,
-    cg_outlook_file,
-    cbna_outlook_file,
-    cg_addon_file,
-    cbna_addon_file,
+# --- Input dataset specs: parquet-first load with Excel fallback ---
+# Raw mapping/adjustment inputs cache their parquet in input_dir; step1 outputs
+# already carry parquet alongside their xlsx in model_convergence_dir.
+input_specs = [
+    (ExcelInputSpec("cg_adjustments",   adjustments_file, "adjustments", "adjustments_cg.parquet",   "Adjustments - CG"),   input_dir),
+    (ExcelInputSpec("cbna_adjustments", adjustments_file, "adjustments", "adjustments_cbna.parquet", "Adjustments - CBNA"), input_dir),
+    (ExcelInputSpec("pug",              pug_file,         "pug",         "pug_mapping.parquet"),                            input_dir),
+    (ExcelInputSpec("pmf_rwa_mapping",  pmf_mapping_file, "pmf",         "pmf_rwa_mapping.parquet",  "Sheet1"),             input_dir),
+    (ExcelInputSpec("cg_outlook",       cg_outlook_file,   "outlook",    "cg_outlook.parquet"),                             model_convergence_dir),
+    (ExcelInputSpec("cbna_outlook",     cbna_outlook_file, "outlook",    "cbna_outlook.parquet"),                           model_convergence_dir),
+    (ExcelInputSpec("addon_all_cg",     cg_addon_file,     "addon",      "addon_all_cg.parquet"),                           model_convergence_dir),
+    (ExcelInputSpec("addon_all_cbna",   cbna_addon_file,   "addon",      "addon_all_cbna.parquet"),                         model_convergence_dir),
 ]
 
-for f in all_input_files:
-    if not f.exists():
-        raise FileNotFoundError(f"INPUT FILE NOT FOUND: {f}")
-    else:
-        print(f"Found: {f.name}")
+# --- Data Quality Check: each dataset needs its parquet OR its source Excel ---
+for spec, parquet_dir in input_specs:
+    if not (parquet_dir / spec.output_name).exists() and not spec.path.exists():
+        raise FileNotFoundError(
+            f"INPUT NOT FOUND for '{spec.label}': neither "
+            f"{parquet_dir / spec.output_name} nor {spec.path}"
+        )
+    print(f"Found: {spec.label}")
 
-src_cg_adjustments   = pd.read_excel(adjustments_file, sheet_name="Adjustments - CG")
-src_cbna_adjustments = pd.read_excel(adjustments_file, sheet_name="Adjustments - CBNA")
-src_pug              = pd.read_excel(pug_file)
-src_rwa_pmf_mapping  = pd.read_excel(pmf_mapping_file, sheet_name="Sheet1")
-src_cg_outlook       = pd.read_excel(cg_outlook_file)
-src_cbna_outlook     = pd.read_excel(cbna_outlook_file)
-src_addon_all_cg     = pd.read_excel(cg_addon_file)
-src_addon_all_cbna   = pd.read_excel(cbna_addon_file)
+# Load order matches input_specs above
+loaded = [load_spec_with_fallback(spec, parquet_dir, registry) for spec, parquet_dir in input_specs]
+(
+    src_cg_adjustments,
+    src_cbna_adjustments,
+    src_pug,
+    src_rwa_pmf_mapping,
+    src_cg_outlook,
+    src_cbna_outlook,
+    src_addon_all_cg,
+    src_addon_all_cbna,
+) = loaded
 
 cg_adjustments   = src_cg_adjustments.copy(deep=True)
 cbna_adjustments = src_cbna_adjustments.copy(deep=True)

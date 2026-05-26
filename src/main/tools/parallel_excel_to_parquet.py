@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any
 
+import numpy as np
 import polars as pl
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -69,6 +70,46 @@ def _convert_spec_to_parquet(
     )
     df.write_parquet(out_path, compression="zstd")
     return f"✅ Written: {spec.output_name}  ({len(df):,} rows)"
+
+
+def load_spec_with_fallback(
+    spec: ExcelInputSpec,
+    parquet_dir: Path,
+    registry: Dict[str, dict],
+) -> pd.DataFrame:
+    """Load one dataset, preferring parquet over Excel.
+
+    Tier 1: read an existing parquet at parquet_dir/spec.output_name.
+    Tier 2: if absent, build it from the source Excel (polars), then read it.
+    Tier 3: if either parquet path fails, read the source Excel directly.
+
+    The if/else split matters: _convert_spec_to_parquet skips writing when the
+    parquet already exists, so a corrupt existing parquet falls through to the
+    Excel read rather than a no-op rebuild.
+    """
+    out_path = Path(parquet_dir) / spec.output_name
+    df = None
+    if out_path.exists():
+        try:
+            df = pd.read_parquet(out_path)
+        except Exception as e:
+            print(f"⚠ parquet read failed for {spec.output_name} ({e}); reading Excel")
+    else:
+        try:
+            _convert_spec_to_parquet(spec, registry, Path(parquet_dir))
+            df = pd.read_parquet(out_path)
+        except Exception as e:
+            print(f"⚠ parquet build failed for {spec.output_name} ({e}); reading Excel")
+
+    if df is None:
+        pandas_sheet = 0 if spec.sheet_name is None else spec.sheet_name
+        df = pd.read_excel(spec.path, sheet_name=pandas_sheet)
+
+    # Mimic pd.read_excel null semantics so the parquet and Excel paths are
+    # interchangeable: Excel reads empty cells as NaN, whereas parquet preserves
+    # them as empty strings. Without this, an empty-string key column survives
+    # group-bys (e.g. pivot_table) that would otherwise drop NaN-keyed rows.
+    return df.replace("", np.nan)
 
 
 def convert_files_to_parquet(
