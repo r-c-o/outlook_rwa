@@ -11,11 +11,19 @@ balance-sheet balances via a **5-key waterfall**.
 
 ## Pipeline
 
-1. `src/main/tools/step1_model_convergence.py` — reads balance sheet + convergence data, builds the
-   **5-key RWF waterfall** lookups, applies them to the outlook, computes SA/AA RWA, and exports
-   parquet/xlsx for step 2.
-2. `src/main/tools/step2_outlook_rwa.py` — consumes step1 outputs + adjustments/PUG/PMF mappings and
-   builds the CG/CBNA upload templates and control files.
+`src/main/tools/run_outlook_rwa.py` is the single end-to-end entry point. It runs two stages in
+one process:
+
+1. **Model convergence** — reads balance sheet + convergence data, builds the **5-key RWF waterfall**
+   lookups, applies them to the outlook, computes SA/AA RWA, and produces the `cg_outlook` /
+   `cbna_outlook` and addon frames.
+2. **Outlook RWA** — consumes those frames (in memory) + adjustments/PUG/PMF mappings and builds the
+   CG/CBNA upload templates and control file.
+
+The stage-1 frames are handed to stage 2 in memory; their **parquet** artifacts are still written
+to `step1_dir` for inspection, and the bulky **xlsx** copies only when `EXPORT_INTERMEDIATE_XLSX`
+is `True`. The stage business logic lives in `functions.py`; `run_outlook_rwa.py` is a thin
+orchestrator.
 
 ## Key code
 
