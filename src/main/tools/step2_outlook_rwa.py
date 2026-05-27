@@ -116,6 +116,16 @@ output_control_filename           = "control_file.xlsx"
 output_dir = Path(config["outputs"]["step2_dir"])
 if not output_dir.exists() and "step2_dir_backup" in config["outputs"]:
     output_dir = Path(config["outputs"]["step2_dir_backup"])
+# Only create the trailing output subfolders (e.g. output/step2) when their
+# root already exists. This guards against a placeholder/mis-set step2_dir whose
+# root is absent — mkdir(parents=True) would otherwise materialize a whole bogus
+# tree instead of failing.
+output_root = output_dir.parent.parent
+if not output_root.exists():
+    raise FileNotFoundError(
+        f"Cannot create step2 output dir '{output_dir}': its root "
+        f"'{output_root}' does not exist. Check 'step2_dir' in config."
+    )
 output_dir.mkdir(parents=True, exist_ok=True)
 
 print(f"Q0:                    {Q0}")
