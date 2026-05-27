@@ -195,11 +195,30 @@ MNGD_GEO_L3_DESC = "Managed Geography Level 3 Description"
 MNGD_SGMT_L4_DESC = "Managed Segment Level 4 Description"
 MNGD_SGMT_L3_DESC = "Managed Segment Level 3 Description"
 MNGD_SGMT_L2_DESC = "Managed Segment Level 2 Description"
+RWA_EXPOSURE_TYPE_DESC = "RWA Exposure Type Description"
 MANAGED_SGMNT_L3_ID = "Managed Segment L3 Id"
 MANAGED_SGMNT_L2_ID = "Managed Segment L2 Id"
 
 SA_RWF = "SA RWF"
 AA_RWF = "AA RWF"
+
+# Group-by grain for aggregating the add-on buckets (markets credit-risk and
+# non-waterfall non-credit-risk) before they are concatenated into the upload
+# template. Every descriptor column lives in the index so it survives the pivot;
+# only the additive RWA amounts are summed.
+ADDON_PIVOT_INDEX = [
+    QRTR_ID,
+    MNGD_SGMT_L4_DESC,
+    MNGD_SGMT_L3_DESC,
+    MNGD_SGMT_L2_DESC,
+    MNGD_GEO_L4_DESC,
+    MNGD_GEO_L3_DESC,
+    FINANCE_PMF_LEVEL_5_DESC,
+    MNGD_SGMT_L4_CDE,
+    MNGD_SGMT_L3_CDE,
+    MNGD_SGMT_L2_CDE,
+    RWA_EXPOSURE_TYPE_DESC,
+]
 
 NON_CREDIT_RISK_PMF = [
     "Commitments to Purchase Forward-Dated Securities (L2)",

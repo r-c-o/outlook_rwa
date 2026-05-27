@@ -13,17 +13,28 @@ EXPORT_INTERMEDIATE_XLSX is True.
 
 Prerequisite: schema_registry.csv must exist (run create_schema_csv.py first).
 """
+import sys
 import warnings
 import pandas as pd
 from pathlib import Path
 
-from .functions import (
+# Allow running as a stand-alone script (python src/outlook_rwa/pipeline.py) in
+# addition to module / installed-entry-point execution. When run as a script
+# __package__ is empty and relative imports fail, so put src/ on the path and
+# use absolute imports (which resolve in both modes).
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from outlook_rwa.functions import (
     _int_str,
     assign_quarter_id,
+    assign_year_month_from_quarter,
     calculate_sa_rwa,
     calculate_aa_rwa,
     assign_erba_rwa_and_metadata,
     split_convergence,
+    build_markets_addon_pivot,
+    build_addon_pivot,
     create_key_pivots,
     compute_rwf,
     set_markets_rwf,
@@ -46,7 +57,7 @@ from .functions import (
     build_frm_control,
     build_raw_data_control,
 )
-from .parallel_excel_to_parquet import (
+from outlook_rwa.parallel_excel_to_parquet import (
     load_schema_registry_from_csv,
     load_spec_with_fallback,
     load_specs_with_schema_cast,
@@ -55,9 +66,10 @@ from .parallel_excel_to_parquet import (
     normalize_nulls,
     ExcelInputSpec,
 )
-from .constants import (
+from outlook_rwa.constants import (
     ADV_CG_TOTAL_RWA_AMT,
     ADV_CBNA_TOTAL_RWA_AMT,
+    ADDON_PIVOT_INDEX,
     PMF_ACCOUNTS,
     MARKETS_L2,
     SA_RWA,
@@ -314,10 +326,10 @@ def main():
     assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook)
 
     # --- 1.11 Addon: markets / non-waterfall ------------------------------------
-    cg_addon_markets_credit_risk[SA_RWA] = cg_addon_markets_credit_risk[SA_RWA_AMT]
-    cbna_addon_markets_credit_risk[SA_RWA] = cbna_addon_markets_credit_risk[SA_RWA_AMT]
-    assign_erba_rwa_and_metadata(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk)
-
+    # Derive YEAR / Month / Quarter Id on the raw rows first (Quarter Id is a
+    # pivot key), then aggregate both add-on buckets to the addon-pivot grain so
+    # the export carries one summarized row per index group instead of one row
+    # per raw convergence record.
     for addon_df in [
         cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
         non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
@@ -329,6 +341,28 @@ def main():
         ).astype("Int64")
         addon_df["Month"] = q_num.map(PROJECTED_QUARTER_TO_MONTH)
         assign_quarter_id(addon_df, quarter_id_mapping)
+        # pivot_table silently drops rows whose index keys are NaN; fill first.
+        addon_df[ADDON_PIVOT_INDEX] = addon_df[ADDON_PIVOT_INDEX].fillna("None")
+
+    cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk = build_markets_addon_pivot(
+        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, ADDON_PIVOT_INDEX
+    )
+    non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna = build_addon_pivot(
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna, ADDON_PIVOT_INDEX
+    )
+
+    # Re-derive YEAR / Month (dropped by the pivot) from the surviving Quarter Id,
+    # then derive the RWA metadata from the aggregated totals. ERBA RWA / Comment
+    # / RWA Exposure Type mirror the waterfall path and apply to the Markets
+    # credit-risk add-on only (matching the pre-pivot behaviour).
+    assign_year_month_from_quarter(
+        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
+        quarter_map=quarter_map,
+    )
+    cg_addon_markets_credit_risk[SA_RWA] = cg_addon_markets_credit_risk[SA_RWA_AMT]
+    cbna_addon_markets_credit_risk[SA_RWA] = cbna_addon_markets_credit_risk[SA_RWA_AMT]
+    assign_erba_rwa_and_metadata(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk)
 
     cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa = (
         pd.concat([non_credit_risk_non_waterfall_cg, cg_addon_markets_credit_risk], ignore_index=True),
