@@ -3,7 +3,7 @@
 # For your machine, create `config.local.toml` next to this file (it is
 # git-ignored) and set only the keys you want to override — e.g. your paths and
 # Q0. It is deep-merged over this file at load time, so your local settings never
-# conflict on `git pull`. See `load_config` in src/main/tools/functions.py.
+# conflict on `git pull`. See `load_config` in src/outlook_rwa/functions.py.
 
 [parameters]
 # Starting quarter of the projection horizon — "Month YYYY" format
@@ -12,9 +12,9 @@ Q0 = "Mar 2025"
 [paths]
 # Absolute paths are machine-specific — override these in config.local.toml.
 data_dir = "/absolute/path/to/outlook_rwa/data"
-schema_registry_csv = "/absolute/path/to/outlook_rwa/src/main/tools/schema_registry.csv"
+schema_registry_csv = "/absolute/path/to/outlook_rwa/src/outlook_rwa/schema_registry.csv"
 data_dir_backup = "/absolute/path/to/backup/outlook-rwa-data"
-schema_registry_csv_backup = "/absolute/path/to/backup/src/main/tools/schema_registry.csv"
+schema_registry_csv_backup = "/absolute/path/to/backup/src/outlook_rwa/schema_registry.csv"
 
 [outputs]
 step1_dir = "/absolute/path/to/outlook_rwa/data/output/step1"

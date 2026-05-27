@@ -8,7 +8,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import polars as pl
 import toml
-from constants import *
+from .constants import *
 
 
 # =============================================================================

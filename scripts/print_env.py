@@ -1,11 +1,11 @@
 """
 Run this script inside the active conda environment to print everything needed
 to recreate it: Python version, conda env name, and versions of all packages
-directly used by step1_model_convergence.py and step2_outlook_rwa.py.
+directly used by the outlook_rwa pipeline.
 
 Usage:
     conda activate <env_name>
-    python print_env.py
+    python scripts/print_env.py
 """
 import sys
 import os

@@ -1,6 +1,15 @@
 # Session exports
 chat_session.json
+chat_session2.json
 *.jsonl
+
+# Local-only files: kept on disk but not tracked
+.claude/
+CLAUDE.md
+REVIEW.md
+__do_git.py
+__git_log.txt
+__git_tmp.txt
 
 # Machine-specific config override (paths, Q0) — never commit
 config.local.toml
@@ -10,6 +19,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 .env
+*.egg-info/
+build/
+dist/
 
 # Data files (large / potentially sensitive)
 data/

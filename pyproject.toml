@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "outlook_rwa"
+version = "0.1.0"
+description = "Projects SA/AA RWA over a forecast horizon via a 5-key RWF waterfall."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "polars",
+    "toml",
+    "openpyxl",
+    "fastexcel",
+    "pyarrow",
+    "python-dateutil",
+]
+
+[project.scripts]
+outlook-rwa = "outlook_rwa.pipeline:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+outlook_rwa = ["schema_registry.csv"]
