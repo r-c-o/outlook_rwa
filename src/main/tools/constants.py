@@ -224,3 +224,75 @@ EXPECTED_BALANCESHEET_COLS = [
     "Managed Geography L4 Descr", "Managed Geography L3 Descr", "PMF Account L5 Descr",
     "Managed Segment L4 Id", "Managed Segment L3 Id", "Managed Segment L2 Id",
 ]
+
+# ---------------------------------------------------------------------------
+# Outlook addon: projected-quarter number -> quarter-end month abbreviation
+# ---------------------------------------------------------------------------
+
+PROJECTED_QUARTER_TO_MONTH = {1: "Mar", 2: "Jun", 3: "Sep", 4: "Dec"}
+
+# ---------------------------------------------------------------------------
+# Parquet/polars -> pandas dtype compatibility map. Used when casting a parquet
+# load to the dtypes the waterfall/RWA logic expects (e.g. integer id columns
+# read as float64, datetimes as datetime64[ns]).
+# ---------------------------------------------------------------------------
+
+POLARS_PANDAS_DTYPE_COMPAT = {
+    "int8": "float64", "int16": "float64", "int32": "float64", "int64": "float64",
+    "uint8": "float64", "uint16": "float64", "uint32": "float64", "uint64": "float64",
+    "boolean": "object", "bool": "object",
+    "string": "object", "utf8": "object", "large_string": "object", "large_utf8": "object",
+    "categorical": "object", "date": "object", "duration": "object",
+    "datetime": "datetime64[ns]",
+}
+
+# ---------------------------------------------------------------------------
+# Upload-template layout (step2 final CG/CBNA templates)
+# ---------------------------------------------------------------------------
+
+# Month placeholder columns; quarter-end values live in the integer columns.
+UPLOAD_TEMPLATE_MONTH_STUBS = [
+    "Month1", "Month2", "Month4", "Month5", "Month7", "Month8",
+    "Month10", "Month11", "Month13", "Month14",
+]
+
+# Column order transcribed from the production upload template: RWA Actuals sits
+# near the front; the quarter value columns (1-7) are interleaved with the Month
+# placeholders; Comment / RWA Exposure Type / Markets Filter trail at the end.
+UPLOAD_TEMPLATE_COL_ORDER = [
+    REPORTING_LAYER,
+    MANAGED_SEGMENT_L2_DESCR,
+    MANAGED_SEGMENT_L3_DESCR,
+    RWA_CALC,
+    PMF_ACCOUNT_L5_DESCR,
+    "RWA Actuals",
+    "FileType",
+    MANAGED_SEGMENT_L4_DESCR,
+    "ManagedGeo",
+    "PUG",
+    "FrsBu",
+    "CustomerSegment",
+    "Product",
+    "Entity",
+    "Affiliate",
+    "Project",
+    "TransactionId",
+    "Account",
+    "BalanceType",
+    "Currency",
+    "Layer",
+    "ModelId",
+    "MDRM",
+    "ReasonCode",
+    "Comments",
+    1, "Month1", "Month2",
+    2, "Month4", "Month5",
+    3, "Month7", "Month8",
+    4, "Month10", "Month11",
+    5, "Month13", "Month14",
+    6,
+    7,
+    "Comment",
+    RWA_EXPOSURE_TYPE,
+    MARKETS_FILTER,
+]

@@ -124,11 +124,63 @@ def load_spec_with_fallback(
         pandas_sheet = 0 if spec.sheet_name is None else spec.sheet_name
         df = pd.read_excel(spec.path, sheet_name=pandas_sheet)
 
-    # Mimic pd.read_excel null semantics so the parquet and Excel paths are
-    # interchangeable: Excel reads empty cells as NaN, whereas parquet preserves
-    # them as empty strings. Without this, an empty-string key column survives
-    # group-bys (e.g. pivot_table) that would otherwise drop NaN-keyed rows.
+    return normalize_nulls(df)
+
+
+def normalize_nulls(df: pd.DataFrame) -> pd.DataFrame:
+    """Mimic pd.read_excel null semantics: treat empty strings as NaN.
+
+    Excel reads empty cells as NaN, whereas parquet preserves them as empty
+    strings. Applying this makes the parquet load, the Excel load, and an
+    in-memory handoff interchangeable. Without it, an empty-string key column
+    survives group-bys (e.g. pivot_table) that would otherwise drop NaN-keyed
+    rows.
+    """
     return df.replace("", np.nan)
+
+
+def _flat_schema_from_registry(registry: Dict[str, dict]) -> Dict[str, Any]:
+    """Flatten the schema registry to {column: numpy dtype}, mapping polars dtype
+    names through POLARS_PANDAS_DTYPE_COMPAT to pandas-compatible dtypes."""
+    from constants import POLARS_PANDAS_DTYPE_COMPAT
+    return {
+        col: np.dtype(POLARS_PANDAS_DTYPE_COMPAT.get(str(dtype).lower(), str(dtype).lower()))
+        for d in registry.values()
+        for col, dtype in d.items()
+    }
+
+
+def load_specs_with_schema_cast(
+    specs: List[ExcelInputSpec],
+    parquet_dir: Path,
+    schema_csv: Path,
+) -> List[pd.DataFrame]:
+    """Load specs parquet-first from parquet_dir, casting to the pandas dtypes
+    the waterfall/RWA logic expects.
+
+    Reads each spec's parquet from parquet_dir and casts its columns via the
+    flattened schema registry. If any parquet is missing/unreadable, builds them
+    all from Excel (parallel) and retries. This is the loader the model-convergence
+    stage relies on (distinct from load_spec_with_fallback, which does not cast
+    dtypes), so it is kept separate to preserve that stage's numeric behavior.
+    """
+    parquet_dir = Path(parquet_dir)
+    registry = load_schema_registry_from_csv(schema_csv)
+    flat_schema = _flat_schema_from_registry(registry)
+
+    def _load(spec):
+        df = pd.read_parquet(parquet_dir / spec.output_name)
+        return df.astype(
+            {c: flat_schema[c] for c in df.columns if c in flat_schema}, errors="ignore"
+        )
+
+    try:
+        return [_load(s) for s in specs]
+    except Exception as e:
+        print(f"Error reading parquet files: {e}")
+        print("Parquet files missing — building them from Excel via the parallel loader...")
+        convert_files_to_parquet(specs, parquet_dir, schema_csv)
+        return [_load(s) for s in specs]
 
 
 def convert_files_to_parquet(

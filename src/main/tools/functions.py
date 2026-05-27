@@ -370,3 +370,374 @@ def build_quarter_mappings(Q0, max_quarters):
         print(f"✅ First quarter mapping matches Q0: {q0_date.strftime('%b')} {q0_date.year}")
 
     return quarter_map, quarter_id_mapping
+
+
+# =============================================================================
+# Waterfall RWF Lookups (model convergence stage)
+# =============================================================================
+
+def _apply_waterfall_lookups(outlook_df, lookup1, lookup2, lookup3, lookup4, lookup5):
+    """Merge the 5 convergence pivot RWF tables onto an outlook DataFrame."""
+    # Key1: MNGD_SGMT_L4_CDE + MNGD_GEO_L4_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
+    lk1 = lookup1.reset_index()
+    lk1["_key"] = (
+        _int_str(lk1[MNGD_SGMT_L4_CDE])
+        + lk1[MNGD_GEO_L4_DESC].astype(str)
+        + lk1[FINANCE_PMF_LEVEL_5_DESC].astype(str)
+        + _int_str(lk1[QRTR_ID])
+    )
+    outlook_df = outlook_df.merge(
+        lk1[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: SA_RWF, AA_RWF: AA_RWF}),
+        left_on="Key1", right_on="_key", how="left",
+    ).drop(columns=["_key"])
+
+    # Key2: MNGD_SGMT_L3_CDE + MNGD_GEO_L4_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
+    lk2 = lookup2.reset_index()
+    lk2["_key"] = (
+        _int_str(lk2[MNGD_SGMT_L3_CDE])
+        + lk2[MNGD_GEO_L4_DESC].astype(str)
+        + lk2[FINANCE_PMF_LEVEL_5_DESC].astype(str)
+        + _int_str(lk2[QRTR_ID])
+    )
+    outlook_df = outlook_df.merge(
+        lk2[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key2", AA_RWF: "AA RWF_key2"}),
+        left_on="Key2", right_on="_key", how="left",
+    ).drop(columns=["_key"])
+
+    # Key3: MNGD_SGMT_L2_CDE + MNGD_GEO_L4_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
+    lk3 = lookup3.reset_index()
+    lk3["_key"] = (
+        _int_str(lk3[MNGD_SGMT_L2_CDE])
+        + lk3[MNGD_GEO_L4_DESC].astype(str)
+        + lk3[FINANCE_PMF_LEVEL_5_DESC].astype(str)
+        + _int_str(lk3[QRTR_ID])
+    )
+    outlook_df = outlook_df.merge(
+        lk3[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key3", AA_RWF: "AA RWF_key3"}),
+        left_on="Key3", right_on="_key", how="left",
+    ).drop(columns=["_key"])
+
+    # Key4: MNGD_SGMT_L3_CDE + MNGD_GEO_L3_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
+    lk4 = lookup4.reset_index()
+    lk4["_key"] = (
+        _int_str(lk4[MNGD_SGMT_L3_CDE])
+        + lk4[MNGD_GEO_L3_DESC].astype(str)
+        + lk4[FINANCE_PMF_LEVEL_5_DESC].astype(str)
+        + _int_str(lk4[QRTR_ID])
+    )
+    outlook_df = outlook_df.merge(
+        lk4[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key4", AA_RWF: "AA RWF_key4"}),
+        left_on="Key4", right_on="_key", how="left",
+    ).drop(columns=["_key"])
+
+    # Key5: MNGD_SGMT_L3_CDE + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
+    lk5 = lookup5.reset_index()
+    lk5["_key"] = (
+        _int_str(lk5[MNGD_SGMT_L3_CDE])
+        + lk5[FINANCE_PMF_LEVEL_5_DESC].astype(str)
+        + _int_str(lk5[QRTR_ID])
+    )
+    outlook_df = outlook_df.merge(
+        lk5[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key5", AA_RWF: "AA RWF_key5"}),
+        left_on="Key5", right_on="_key", how="left",
+    ).drop(columns=["_key"])
+
+    return outlook_df
+
+
+# =============================================================================
+# Outlook RWA stage: adjustments, addon, pivots, upload template, controls
+# =============================================================================
+
+def format_adjustments(input_df):
+    """Coerce RWF/Balances columns to numeric, then fill NaN (0 numeric, 'N/A' text)."""
+    cols_to_num = ['Balances', 'SA RWF', 'AA RWF', 'SA RWF_key2', 'AA RWF_key2',
+                   'SA RWF_key3', 'AA RWF_key3', 'SA RWF_key4', 'AA RWF_key4',
+                   'SA RWF_key5', 'AA RWF_key5']
+    for c in cols_to_num:
+        if c in input_df.columns:
+            input_df[c] = pd.to_numeric(input_df[c], errors='coerce')
+
+    numeric_cols = input_df.select_dtypes(include=['number']).columns
+    input_df[numeric_cols] = input_df[numeric_cols].fillna(0)
+
+    string_cols = input_df.select_dtypes(include=['object']).columns
+    input_df[string_cols] = input_df[string_cols].fillna('N/A')
+
+    return input_df
+
+
+def rename_addon_columns(input_df, entity):
+    """Rename convergence-style addon columns to outlook-style short names.
+
+    `entity` ('CG'/'CBNA') selects which Adv. RWA column maps to AA RWA, so the
+    CBNA addon's AA RWA is sourced from its own column rather than CG's.
+
+    step1 pre-creates partial short columns (SA RWA / RWA Exposure Type) on the
+    addon frame; those collide with the long->short rename, so the partial
+    copies are dropped first and the fully-populated convergence columns take
+    their place. Quarter Id is intentionally not renamed (it already matches),
+    so it survives into the downstream concat.
+    """
+    adv_col = f'Adv. {entity.upper()} Total RWA Amount with 1.06 Multiplier'
+    rename_dict = {
+        adv_col: AA_RWA,
+        'Managed Segment Level 4 Description': MANAGED_SEGMENT_L4_DESCR,
+        'Managed Segment Level 3 Description': MANAGED_SEGMENT_L3_DESCR,
+        'Managed Segment Level 2 Description': MANAGED_SEGMENT_L2_DESCR,
+        'Managed Geography Level 4 Description': 'Managed Geography L4 Descr',
+        'Managed Geography Level 3 Description': MANAGED_GEOGRAPHY_L3_DESCR,
+        'Finance PMF Level 5 Description': PMF_ACCOUNT_L5_DESCR,
+        'SA RWA Amount': SA_RWA,
+        'Managed Segment Level 2 Code': 'Managed Segment L2 Id',
+        'Managed Segment Level 4 Code': 'Managed Segment L4 Id',
+        'Managed Segment Level 3 Code': 'Managed Segment L3 Id',
+        'RWA Exposure Type Description': RWA_EXPOSURE_TYPE,
+    }
+    rename_dict = {k: v for k, v in rename_dict.items() if k in input_df.columns}
+    collisions = [v for v in rename_dict.values() if v in input_df.columns]
+    return input_df.drop(columns=collisions).rename(columns=rename_dict)
+
+
+def legacy_franchises_breakout(input_df):
+    """Split data by Reporting Layer into legacy and non-legacy sub-groups.
+
+    Splits into sub-groups based on REPORTING_LAYER and MANAGED_SEGMENT_L3_DESCR /
+    MANAGED_SEGMENT_L4_DESCR values, assigns appropriate REPORTING_LAYER label,
+    then recombines.
+
+    Args:
+        input_df: DataFrame with REPORTING_LAYER, MANAGED_SEGMENT_L3_DESCR,
+                  MANAGED_SEGMENT_L4_DESCR, and MANAGED_GEOGRAPHY_L3_DESCR.
+
+    Returns:
+        DataFrame with REPORTING_LAYER values set per sub-group.
+    """
+    input_df = input_df.copy()
+
+    legacy          = input_df[input_df[MANAGED_SEGMENT_L3_DESCR] == LEGACY_FRANCHISES_L3].copy()
+    legacy_holdings = legacy[legacy[MANAGED_SEGMENT_L4_DESCR] == LEGACY_HOLDINGS_ASSETS_L4].copy()
+
+    legacy_non_holdings = legacy[legacy[MANAGED_SEGMENT_L4_DESCR] != LEGACY_HOLDINGS_ASSETS_L4].copy()
+
+    non_legacy      = input_df[input_df[MANAGED_SEGMENT_L3_DESCR] != LEGACY_FRANCHISES_L3].copy()
+    non_latin       = non_legacy[non_legacy[MANAGED_GEOGRAPHY_L3_DESCR] != LATIN_AMERICA].copy()
+    non_legacy_latin = non_legacy[non_legacy[MANAGED_GEOGRAPHY_L3_DESCR] == LATIN_AMERICA].copy()
+
+    legacy_holdings[REPORTING_LAYER]     = "Legacy Holdings"
+    legacy_non_holdings[REPORTING_LAYER] = "Legacy Holdings Other"
+    non_latin[REPORTING_LAYER]           = "Non Legacy"
+    non_legacy_latin[REPORTING_LAYER]    = "Legacy - Latin America"
+
+    return pd.concat([legacy_holdings, legacy_non_holdings, non_latin, non_legacy_latin])
+
+
+def format_columns_before_pivots(input_df):
+    """Ensure numeric/string/RWA column types and fill NaN before pivots.
+
+    Coerces SA_RWA, AA_RWA, ERBA_RWA to numeric with errors='coerce'.
+
+    Args:
+        input_df: DataFrame prior to pivot operations.
+
+    Returns:
+        input_df with numeric RWA columns coerced.
+    """
+    input_df[SA_RWA]   = pd.to_numeric(input_df[SA_RWA],   errors='coerce')
+    input_df[AA_RWA]   = pd.to_numeric(input_df[AA_RWA],   errors='coerce')
+    input_df[ERBA_RWA] = pd.to_numeric(input_df[ERBA_RWA], errors='coerce')
+
+    # Fill NaN pivot-key strings with 'None' so group-by/pivot does not drop
+    # NaN-keyed rows (which would empty the upload template).
+    for col in [MANAGED_SEGMENT_L4_DESCR, MANAGED_SEGMENT_L3_DESCR, MANAGED_SEGMENT_L2_DESCR,
+                PMF_ACCOUNT_L5_DESCR, 'Entity', REPORTING_LAYER,
+                SA_ACCOUNT_NUM, AA_ACCOUNT_NUM, 'PUG']:
+        if col in input_df.columns:
+            input_df[col] = input_df[col].fillna('None')
+    return input_df
+
+
+def create_markets_filter(input_df):
+    """Mark rows Keep/Remove based on Markets L2 + RWA Exposure Type.
+
+    Args:
+        input_df: DataFrame with MANAGED_SEGMENT_L2_DESCR and RWA_EXPOSURE_TYPE.
+
+    Returns:
+        input_df with MARKETS_FILTER column added.
+    """
+    input_df[MARKETS_FILTER] = np.where(
+        (input_df[MANAGED_SEGMENT_L2_DESCR] == MARKETS_L2)
+        & (input_df[RWA_EXPOSURE_TYPE] == 0),
+        "Keep",
+        "Remove",
+    )
+    return input_df
+
+
+def create_upload_template_pivots(input_df):
+    """Create ERBA, AA, SA upload template pivots and concatenate.
+
+    Creates three pivots — ERBA, AA, SA — each summed over QUARTER_ID as
+    columns. Sets RWA_CALC column value per pivot type.
+
+    Args:
+        input_df: DataFrame with all required columns for pivoting.
+
+    Returns:
+        Concatenated DataFrame of ERBA, AA, SA pivots with RWA_CALC set.
+    """
+    input_df = input_df.copy()
+    input_df = input_df.fillna(0)
+    # Integer quarter labels so the downstream integer-label reorder/rename/agg
+    # match regardless of any float coercion upstream.
+    input_df[QUARTER_ID] = pd.to_numeric(input_df[QUARTER_ID], errors="coerce").fillna(0).astype(int)
+
+    pivot_index = [
+        MANAGED_SEGMENT_L4_DESCR,
+        MANAGED_SEGMENT_L3_DESCR,
+        MANAGED_SEGMENT_L2_DESCR,
+        PMF_ACCOUNT_L5_DESCR,
+        "Comment",
+        RWA_EXPOSURE_TYPE,
+        "Entity",
+        REPORTING_LAYER,
+        SA_ACCOUNT_NUM,
+        AA_ACCOUNT_NUM,
+        "PUG",
+    ]
+
+    # Filter pivot_index to columns that actually exist
+    pivot_index = [c for c in pivot_index if c in input_df.columns]
+
+    def make_pivot(values_col, rwa_label):
+        """Build a single pivot table for one RWA calc type."""
+        pivot = input_df.pivot_table(
+            values=values_col,
+            index=pivot_index,
+            columns=[QUARTER_ID],
+            aggfunc="sum",
+            fill_value=0,
+        ).reset_index()
+        for i in range(8):
+            if i not in pivot.columns:
+                pivot[i] = 0
+        pivot = pivot[pivot_index + [1, 2, 3, 4, 5, 6, 7, 0]]
+        pivot[RWA_CALC] = rwa_label
+        return pivot
+
+    erba_pivot = make_pivot(ERBA_RWA, "ERBA")
+    aa_pivot   = make_pivot(AA_RWA,   "AA")
+    sa_pivot   = make_pivot(SA_RWA,   "SA")
+
+    pivots = pd.concat([erba_pivot, aa_pivot, sa_pivot])
+    pivots.columns.name = None
+    return pivots
+
+
+def format_upload_template(input_df):
+    """Add upload stub columns, derive the Account number, and reorder for upload.
+
+    Adds the fixed upload stub columns, derives a single Account number from the
+    SA/AA account numbers per RWA Calc type (defaulting missing ones), adds the
+    month placeholder columns, drops the now-redundant SA/AA account columns and
+    reorders to the production upload layout.
+    """
+    input_df = input_df.copy()
+
+    numeric_cols = input_df.select_dtypes(include=['number']).columns
+    input_df[numeric_cols] = input_df[numeric_cols].fillna(0)
+
+    # Fixed upload stub columns
+    input_df["FileType"]        = "R"
+    input_df["ManagedGeo"]      = ""
+    input_df["FrsBu"]           = ""
+    input_df["CustomerSegment"] = ""
+    input_df["Product"]         = ""
+    input_df["Affiliate"]       = "00000"
+    input_df["Project"]         = ""
+    input_df["TransactionId"]   = ""
+    input_df["BalanceType"]     = "EOP"
+    input_df["Currency"]        = "USD"
+    input_df["Layer"]           = ""
+    input_df["ModelId"]         = ""
+    input_df["MDRM"]            = ""
+    input_df["ReasonCode"]      = ""
+    input_df["Comments"]        = ""
+
+    # Account: AA -> AA account #, SA -> SA account #, otherwise N/A
+    input_df["Account"] = np.where(
+        input_df[RWA_CALC] == "AA",
+        input_df[AA_ACCOUNT_NUM],
+        np.where(input_df[RWA_CALC] == "SA", input_df[SA_ACCOUNT_NUM], "N/A"),
+    )
+    # Default account numbers where the PMF mapping was missing ('None')
+    input_df["Account"] = np.where(
+        (input_df[RWA_CALC] == "AA") & (input_df["Account"] == "None"),
+        "664062", input_df["Account"],
+    )
+    input_df["Account"] = np.where(
+        (input_df[RWA_CALC] == "SA") & (input_df["Account"] == "None"),
+        "663722", input_df["Account"],
+    )
+
+    # Month placeholder columns (quarter-end values live in the integer columns)
+    for m in UPLOAD_TEMPLATE_MONTH_STUBS:
+        input_df[m] = 0
+
+    input_df = input_df.drop(columns=[SA_ACCOUNT_NUM, AA_ACCOUNT_NUM])
+    input_df = input_df.rename(columns={0: "RWA Actuals"})
+
+    input_df = input_df[[c for c in UPLOAD_TEMPLATE_COL_ORDER if c in input_df.columns]]
+    input_df = input_df.sort_values([MANAGED_SEGMENT_L2_DESCR, MANAGED_SEGMENT_L3_DESCR])
+    return input_df
+
+
+def build_convergence_control(convergence_df, entity_filter_col, adv_rwa_col):
+    """Summarise convergence SA/AA RWA by L2 segment x quarter for the control file.
+
+    Filters to the entity (CG/CBNA), excludes Discontinued Ops, then melts SA/AA
+    into an RWA Calc dimension and pivots quarters across the columns.
+    """
+    MNGED = "Managed Segment Level 2 Description"
+    ctrl = convergence_df[convergence_df[entity_filter_col] == "Y"].copy()
+    ctrl = ctrl[ctrl[MNGED] != DISCONTINUED_OPS_L2]
+    ctrl = ctrl.rename(columns={adv_rwa_col: AA_RWA, "SA RWA Amount": SA_RWA,
+                                MNGED: MANAGED_SEGMENT_L2_DESCR})
+    ctrl = ctrl.groupby([MANAGED_SEGMENT_L2_DESCR, QUARTER_ID]).agg(
+        {SA_RWA: "sum", AA_RWA: "sum"}).reset_index()
+    ctrl = ctrl.melt(id_vars=[MANAGED_SEGMENT_L2_DESCR, QUARTER_ID],
+                     value_name="Month", var_name=RWA_CALC)
+    ctrl = ctrl.pivot_table(index=[MANAGED_SEGMENT_L2_DESCR, RWA_CALC],
+                            columns=QUARTER_ID, values="Month", aggfunc="sum").reset_index()
+    ctrl.columns.name = None
+    return ctrl
+
+
+def build_frm_control(frm_output_df):
+    """Summarise the formatted upload template by L2 segment x RWA calc type.
+
+    Sums the quarter columns (1-7) and the actuals column, mapping the AA/SA
+    pivot labels to the canonical RWA names and dropping ERBA.
+    """
+    ctrl = frm_output_df.groupby([MANAGED_SEGMENT_L2_DESCR, RWA_CALC]).agg(
+        {"RWA Actuals": "sum", 1: "sum", 2: "sum", 3: "sum", 4: "sum",
+         5: "sum", 6: "sum", 7: "sum"}).reset_index()
+    ctrl = ctrl.rename(columns={"RWA Actuals": 0})
+    ctrl[RWA_CALC] = ctrl[RWA_CALC].map({"AA": AA_RWA, "SA": SA_RWA})
+    ctrl = ctrl[ctrl[RWA_CALC].isin([AA_RWA, SA_RWA])]
+    return ctrl
+
+
+def build_raw_data_control(raw_data_df):
+    """Summarise raw data SA/AA RWA by L2 segment x quarter for the control file."""
+    ctrl = raw_data_df.copy()
+    ctrl[QUARTER_ID] = pd.to_numeric(ctrl[QUARTER_ID], errors="coerce")
+    ctrl = ctrl.groupby([MANAGED_SEGMENT_L2_DESCR, QUARTER_ID]).agg(
+        {SA_RWA: "sum", AA_RWA: "sum"}).reset_index()
+    ctrl = ctrl.melt(id_vars=[MANAGED_SEGMENT_L2_DESCR, QUARTER_ID],
+                     value_name="Month", var_name=RWA_CALC)
+    ctrl = ctrl.pivot_table(index=[MANAGED_SEGMENT_L2_DESCR, RWA_CALC],
+                            columns=QUARTER_ID, values="Month", aggfunc="sum").reset_index()
+    ctrl.columns.name = None
+    return ctrl
