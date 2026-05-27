@@ -1,6 +1,7 @@
 import os
 import warnings
 import time
+from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -58,7 +59,7 @@ def assign_quarter_id(outlook_df, quarter_id_mapping):
     using the provided mapping. If no match is found, assigns 'Unknown'.
     Modifies the DataFrame in place.
     """
-    outlook_df[QRTR_ID] = outlook_df[["YEAR", "Month"]].apply(
+    outlook_df[QUARTER_ID] = outlook_df[["YEAR", "Month"]].apply(
         lambda row: quarter_id_mapping.get((row["YEAR"], row["Month"]), "Unknown"), axis=1
     )
 
@@ -88,7 +89,7 @@ def calculate_sa_rwa(df):
     # first present multiplier (a present 0 is used as-is; only null/empty skipped)
     df["FINAL_SA_RWF"] = _first_valid_rwf(df, rwf_columns)
     df[SA_RWA] = np.where(
-        df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
+        df[PMF_ACCOUNT_L5_DESCR].isin(NON_CREDIT_RISK_PMF),
         0,
         pd.to_numeric(df["Balances"], errors="coerce") * df["FINAL_SA_RWF"],
     )
@@ -105,99 +106,73 @@ def calculate_aa_rwa(df):
     # first present multiplier (a present 0 is used as-is; only null/empty skipped)
     df["FINAL_AA_RWF"] = _first_valid_rwf(df, rwf_columns)
     df[AA_RWA] = np.where(
-        df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
+        df[PMF_ACCOUNT_L5_DESCR].isin(NON_CREDIT_RISK_PMF),
         0,
         pd.to_numeric(df["Balances"], errors="coerce") * df["FINAL_AA_RWF"],
     )
 
 
-def assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook):
+def assign_erba_rwa_and_metadata(outlook_df):
     """
-    Assign ERBA RWA, Comment, and RWA Exposure Type columns to CG and CBNA
-    outlook DataFrames. ERBA RWA is set to SA RWA where QRTR_ID is '5' or '6',
-    else NaN. Comment is set to empty string, RWA Exposure Type to 'Banking Book'.
-    Modifies DataFrames in place.
+    Assign ERBA RWA, Comment, and RWA Exposure Type columns to an outlook
+    DataFrame. ERBA RWA is set to SA RWA where Quarter Id is '5' or '6', else
+    NaN. Comment is set to empty string, RWA Exposure Type to 'Banking Book'.
+    Modifies the DataFrame in place.
     """
-    cg_outlook[ERBA_RWA] = cg_outlook[SA_RWA].where(cg_outlook[QRTR_ID].isin(["5", "6"]))
-    cbna_outlook[ERBA_RWA] = cbna_outlook[SA_RWA].where(cbna_outlook[QRTR_ID].isin(["5", "6"]))
-    cg_outlook["Comment"] = ""
-    cg_outlook["RWA Exposure Type"] = "Banking Book"
-    cbna_outlook["Comment"] = ""
-    cbna_outlook["RWA Exposure Type"] = "Banking Book"
+    outlook_df[ERBA_RWA] = outlook_df[SA_RWA].where(outlook_df[QUARTER_ID].isin(["5", "6"]))
+    outlook_df["Comment"] = ""
+    outlook_df["RWA Exposure Type"] = "Banking Book"
 
 
-def split_convergence(convergence, pmf_accounts, markets_l2):
-    """Split convergence into mutually exclusive credit-risk, non-waterfall, and Markets add-on buckets."""
-    credit_risk_convergence_cg = convergence[
-        (convergence[REPORTABLE_ENTITY_IS_CG] == "Y") &
-        (convergence[FINANCE_PMF_LEVEL_5_DESC].isin(pmf_accounts))
-    ].copy()
+@dataclass(frozen=True)
+class ConvergenceBuckets:
+    """An entity's convergence rows split into the three downstream buckets."""
+    credit_risk: pd.DataFrame    # PMF accounts -> 5-key RWF waterfall
+    non_waterfall: pd.DataFrame  # non-PMF, non-Markets -> add-on (RWA carried as-is)
+    markets: pd.DataFrame        # Markets [L2] -> add-on
 
-    credit_risk_convergence_cbna = convergence[
-        (convergence[REPORTABLE_ENTITY_IS_CBNA] == "Y") &
-        (convergence[FINANCE_PMF_LEVEL_5_DESC].isin(pmf_accounts))
-    ].copy()
 
-    cg_addon_markets_credit_risk = convergence[
-        (convergence[REPORTABLE_ENTITY_IS_CG] == "Y") &
-        (convergence[MNGD_SGMT_L2_DESC].isin([markets_l2]))
-    ].copy()
+def split_convergence(convergence, entities=ENTITIES, pmf_accounts=PMF_ACCOUNTS, markets_l2=MARKETS_L2):
+    """Split convergence into per-entity credit-risk, non-waterfall, and Markets buckets.
 
-    cbna_addon_markets_credit_risk = convergence[
-        (convergence[REPORTABLE_ENTITY_IS_CBNA] == "Y") &
-        (convergence[MNGD_SGMT_L2_DESC].isin([markets_l2]))
-    ].copy()
+    Returns a dict keyed by entity name (e.g. {"CG": ConvergenceBuckets, ...}).
+    The three buckets are mutually exclusive within an entity.
+    """
+    is_pmf = convergence[FINANCE_PMF_LEVEL_5_DESC].isin(pmf_accounts)
+    is_markets = convergence[MNGD_SGMT_L2_DESC].isin([markets_l2])
 
-    non_credit_risk_non_waterfall_cg = convergence[
-        (convergence[REPORTABLE_ENTITY_IS_CG] == "Y") &
-        (~convergence[FINANCE_PMF_LEVEL_5_DESC].isin(pmf_accounts)) &
-        (convergence[MNGD_SGMT_L2_DESC] != markets_l2)
-    ].copy()
-
-    non_credit_risk_non_waterfall_cbna = convergence[
-        (convergence[REPORTABLE_ENTITY_IS_CBNA] == "Y") &
-        (~convergence[FINANCE_PMF_LEVEL_5_DESC].isin(pmf_accounts)) &
-        (convergence[MNGD_SGMT_L2_DESC] != markets_l2)
-    ].copy()
-
-    return (
-        credit_risk_convergence_cg,
-        credit_risk_convergence_cbna,
-        non_credit_risk_non_waterfall_cg,
-        non_credit_risk_non_waterfall_cbna,
-        cg_addon_markets_credit_risk,
-        cbna_addon_markets_credit_risk,
-    )
+    result = {}
+    for entity in entities:
+        is_entity = convergence[entity.reportable_col] == "Y"
+        result[entity.name] = ConvergenceBuckets(
+            credit_risk=convergence[is_entity & is_pmf].copy(),
+            non_waterfall=convergence[
+                is_entity & ~is_pmf & (convergence[MNGD_SGMT_L2_DESC] != markets_l2)
+            ].copy(),
+            markets=convergence[is_entity & is_markets].copy(),
+        )
+    return result
 
 
 def create_key_pivots(crd_df, adv_rwa_col):
-    """Create the 5 key pivot tables for a given entity's credit-risk data."""
-    key1 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L4_CDE, MNGD_GEO_L4_DESC, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    key2 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L3_CDE, MNGD_GEO_L4_DESC, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    key3 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L2_CDE, MNGD_GEO_L4_DESC, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    key4 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L3_CDE, MNGD_GEO_L3_DESC, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    key5 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L3_CDE, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    return key1, key2, key3, key4, key5
+    """Build the 5 waterfall pivot tables for an entity's credit-risk data.
+
+    Returns a dict keyed by waterfall key name ("Key1".."Key5"). The pivot index
+    for each key is driven by WATERFALL_KEYS (segment code, optional geography),
+    always summed by Quarter Id + PMF L5 + Segment L2.
+    """
+    pivots = {}
+    for key in WATERFALL_KEYS:
+        index = [QUARTER_ID, key.conv_segment_code]
+        if key.conv_geo is not None:
+            index.append(key.conv_geo)
+        index += [FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC]
+        pivots[key.name] = crd_df.pivot_table(
+            values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
+            index=index,
+            aggfunc="sum",
+        )
+    return pivots
 
 
 def compute_rwf(key_df, adv_rwa_col):
@@ -218,38 +193,18 @@ def set_markets_rwf(key_df):
 
 
 def build_outlook_key_strings(outlook_df):
-    """Build composite key strings for the 5-key waterfall on an outlook DataFrame.
-    Modifies the DataFrame in place.
+    """Build the 5 composite waterfall key strings on an outlook DataFrame.
+
+    Driven by WATERFALL_KEYS: each key is <segment id> [+ <geography>] + <PMF L5>
+    + <Quarter Id>. Modifies the DataFrame in place.
     """
-    outlook_df["Key1"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L4_ID])
-        + outlook_df[MANAGED_GEO_L4_DESC].astype(str)
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
-    outlook_df["Key2"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L3_ID])
-        + outlook_df[MANAGED_GEO_L4_DESC].astype(str)
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
-    outlook_df["Key3"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L2_ID])
-        + outlook_df[MANAGED_GEO_L4_DESC].astype(str)
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
-    outlook_df["Key4"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L3_ID])
-        + outlook_df[MANAGED_GEO_L3_DESC].astype(str)
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
-    outlook_df["Key5"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L3_ID])
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
+    pmf = outlook_df[PMF_ACCOUNT_L5_DESCR].astype(str)
+    quarter = outlook_df[QUARTER_ID].astype(str)
+    for key in WATERFALL_KEYS:
+        composite = _int_str(outlook_df[key.outlook_segment_id])
+        if key.outlook_geo is not None:
+            composite = composite + outlook_df[key.outlook_geo].astype(str)
+        outlook_df[key.name] = composite + pmf + quarter
 
 
 def rename_month_columns(df):
@@ -268,12 +223,12 @@ def create_quarterly_pivot(df):
     """
     pivot_index = [
         "YEAR",
-        MANAGED_SGMNT_L4_DESC,
-        MANAGED_SGMNT_L3_DESC,
-        MANAGED_SGMNT_L2_DESC,
-        MANAGED_GEO_L4_DESC,
-        MANAGED_GEO_L3_DESC,
-        PMF_ACCT_L5_DESC,
+        MANAGED_SEGMENT_L4_DESCR,
+        MANAGED_SEGMENT_L3_DESCR,
+        MANAGED_SEGMENT_L2_DESCR,
+        MANAGED_GEOGRAPHY_L4_DESCR,
+        MANAGED_GEOGRAPHY_L3_DESCR,
+        PMF_ACCOUNT_L5_DESCR,
         MANAGED_SGMNT_L4_ID,
         MANAGED_SGMNT_L3_ID,
         MANAGED_SGMNT_L2_ID,
@@ -289,12 +244,12 @@ def melt_quarterly_pivot(pivot_df):
     """Melt a quarterly pivot DataFrame to long format with Month and Balances columns."""
     melt_id_vars = [
         "YEAR",
-        MANAGED_SGMNT_L4_DESC,
-        MANAGED_SGMNT_L3_DESC,
-        MANAGED_SGMNT_L2_DESC,
-        MANAGED_GEO_L4_DESC,
-        MANAGED_GEO_L3_DESC,
-        PMF_ACCT_L5_DESC,
+        MANAGED_SEGMENT_L4_DESCR,
+        MANAGED_SEGMENT_L3_DESCR,
+        MANAGED_SEGMENT_L2_DESCR,
+        MANAGED_GEOGRAPHY_L4_DESCR,
+        MANAGED_GEOGRAPHY_L3_DESCR,
+        PMF_ACCOUNT_L5_DESCR,
         MANAGED_SGMNT_L4_ID,
         MANAGED_SGMNT_L3_ID,
         MANAGED_SGMNT_L2_ID,
@@ -376,73 +331,63 @@ def build_quarter_mappings(Q0, max_quarters):
 # Waterfall RWF Lookups (model convergence stage)
 # =============================================================================
 
-def _apply_waterfall_lookups(outlook_df, lookup1, lookup2, lookup3, lookup4, lookup5):
-    """Merge the 5 convergence pivot RWF tables onto an outlook DataFrame."""
-    # Key1: MNGD_SGMT_L4_CDE + MNGD_GEO_L4_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk1 = lookup1.reset_index()
-    lk1["_key"] = (
-        _int_str(lk1[MNGD_SGMT_L4_CDE])
-        + lk1[MNGD_GEO_L4_DESC].astype(str)
-        + lk1[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk1[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk1[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: SA_RWF, AA_RWF: AA_RWF}),
-        left_on="Key1", right_on="_key", how="left",
-    ).drop(columns=["_key"])
+def _apply_waterfall_lookups(outlook_df, lookups):
+    """Merge the 5 convergence RWF pivot tables onto an outlook DataFrame.
 
-    # Key2: MNGD_SGMT_L3_CDE + MNGD_GEO_L4_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk2 = lookup2.reset_index()
-    lk2["_key"] = (
-        _int_str(lk2[MNGD_SGMT_L3_CDE])
-        + lk2[MNGD_GEO_L4_DESC].astype(str)
-        + lk2[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk2[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk2[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key2", AA_RWF: "AA RWF_key2"}),
-        left_on="Key2", right_on="_key", how="left",
-    ).drop(columns=["_key"])
-
-    # Key3: MNGD_SGMT_L2_CDE + MNGD_GEO_L4_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk3 = lookup3.reset_index()
-    lk3["_key"] = (
-        _int_str(lk3[MNGD_SGMT_L2_CDE])
-        + lk3[MNGD_GEO_L4_DESC].astype(str)
-        + lk3[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk3[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk3[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key3", AA_RWF: "AA RWF_key3"}),
-        left_on="Key3", right_on="_key", how="left",
-    ).drop(columns=["_key"])
-
-    # Key4: MNGD_SGMT_L3_CDE + MNGD_GEO_L3_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk4 = lookup4.reset_index()
-    lk4["_key"] = (
-        _int_str(lk4[MNGD_SGMT_L3_CDE])
-        + lk4[MNGD_GEO_L3_DESC].astype(str)
-        + lk4[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk4[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk4[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key4", AA_RWF: "AA RWF_key4"}),
-        left_on="Key4", right_on="_key", how="left",
-    ).drop(columns=["_key"])
-
-    # Key5: MNGD_SGMT_L3_CDE + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk5 = lookup5.reset_index()
-    lk5["_key"] = (
-        _int_str(lk5[MNGD_SGMT_L3_CDE])
-        + lk5[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk5[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk5[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key5", AA_RWF: "AA RWF_key5"}),
-        left_on="Key5", right_on="_key", how="left",
-    ).drop(columns=["_key"])
-
+    `lookups` is the dict returned by create_key_pivots ({"Key1": pivot, ...}).
+    For each waterfall key, the convergence-side composite (segment code [+ geo]
+    + PMF L5 + Quarter Id) is matched against the outlook-side key string, and the
+    pivot's SA/AA RWF land on that key's output columns (Key1 -> base, Key2-5 ->
+    suffixed).
+    """
+    for key in WATERFALL_KEYS:
+        lk = lookups[key.name].reset_index()
+        composite = _int_str(lk[key.conv_segment_code])
+        if key.conv_geo is not None:
+            composite = composite + lk[key.conv_geo].astype(str)
+        lk["_key"] = composite + lk[FINANCE_PMF_LEVEL_5_DESC].astype(str) + _int_str(lk[QUARTER_ID])
+        outlook_df = outlook_df.merge(
+            lk[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: key.sa_rwf_col, AA_RWF: key.aa_rwf_col}),
+            left_on=key.name, right_on="_key", how="left",
+        ).drop(columns=["_key"])
     return outlook_df
+
+
+def apply_adjustments(outlook_df, adjustments_df):
+    """Left-merge the adjustments frame onto an outlook frame on Key1.
+
+    Builds the adjustments Key1 composite (segment L4 id + geography L4 + PMF L5 +
+    Quarter Id) to match build_outlook_key_strings, then pulls ADJUSTMENT_MERGE_COLS
+    across. Returns a new frame; the adjustments frame is not mutated.
+    """
+    adjustments_df = adjustments_df.copy()
+    adjustments_df["Key1"] = (
+        _int_str(adjustments_df[MANAGED_SGMNT_L4_ID])
+        + adjustments_df[MANAGED_GEOGRAPHY_L4_DESCR].astype(str)
+        + adjustments_df[PMF_ACCOUNT_L5_DESCR].astype(str)
+        + adjustments_df[QUARTER_ID].astype(str)
+    )
+    return outlook_df.merge(
+        adjustments_df[ADJUSTMENT_MERGE_COLS],
+        on="Key1",
+        how="left",
+        suffixes=("", "_adj"),
+    )
+
+
+def prepare_addon_quarter_fields(addon_df, quarter_id_mapping):
+    """Derive YEAR / Month / Quarter Id on an add-on frame from Projected Quarter.
+
+    'Projected Quarter' looks like '4Q25': digit 0 is the quarter number, chars
+    from index 2 are the 2-digit year. Modifies the DataFrame in place.
+    """
+    q_num = pd.to_numeric(addon_df["Projected Quarter"].str[0], errors="coerce").astype("Int64")
+    addon_df["YEAR"] = pd.to_numeric(
+        addon_df["Projected Quarter"].str[2:].apply(lambda x: "20" + x if pd.notna(x) else x),
+        errors="coerce",
+    ).astype("Int64")
+    addon_df["Month"] = q_num.map(PROJECTED_QUARTER_TO_MONTH)
+    assign_quarter_id(addon_df, quarter_id_mapping)
 
 
 # =============================================================================
@@ -470,8 +415,9 @@ def format_adjustments(input_df):
 def rename_addon_columns(input_df, entity):
     """Rename convergence-style addon columns to outlook-style short names.
 
-    `entity` ('CG'/'CBNA') selects which Adv. RWA column maps to AA RWA, so the
-    CBNA addon's AA RWA is sourced from its own column rather than CG's.
+    `entity` is an EntityConfig; its adv_rwa_col selects which Adv. RWA column
+    maps to AA RWA, so the CBNA addon's AA RWA is sourced from its own column
+    rather than CG's.
 
     step1 pre-creates partial short columns (SA RWA / RWA Exposure Type) on the
     addon frame; those collide with the long->short rename, so the partial
@@ -479,20 +425,19 @@ def rename_addon_columns(input_df, entity):
     their place. Quarter Id is intentionally not renamed (it already matches),
     so it survives into the downstream concat.
     """
-    adv_col = f'Adv. {entity.upper()} Total RWA Amount with 1.06 Multiplier'
     rename_dict = {
-        adv_col: AA_RWA,
-        'Managed Segment Level 4 Description': MANAGED_SEGMENT_L4_DESCR,
-        'Managed Segment Level 3 Description': MANAGED_SEGMENT_L3_DESCR,
-        'Managed Segment Level 2 Description': MANAGED_SEGMENT_L2_DESCR,
-        'Managed Geography Level 4 Description': 'Managed Geography L4 Descr',
-        'Managed Geography Level 3 Description': MANAGED_GEOGRAPHY_L3_DESCR,
-        'Finance PMF Level 5 Description': PMF_ACCOUNT_L5_DESCR,
-        'SA RWA Amount': SA_RWA,
-        'Managed Segment Level 2 Code': 'Managed Segment L2 Id',
-        'Managed Segment Level 4 Code': 'Managed Segment L4 Id',
-        'Managed Segment Level 3 Code': 'Managed Segment L3 Id',
-        'RWA Exposure Type Description': RWA_EXPOSURE_TYPE,
+        entity.adv_rwa_col: AA_RWA,
+        MNGD_SGMT_L4_DESC: MANAGED_SEGMENT_L4_DESCR,
+        MNGD_SGMT_L3_DESC: MANAGED_SEGMENT_L3_DESCR,
+        MNGD_SGMT_L2_DESC: MANAGED_SEGMENT_L2_DESCR,
+        MNGD_GEO_L4_DESC: MANAGED_GEOGRAPHY_L4_DESCR,
+        MNGD_GEO_L3_DESC: MANAGED_GEOGRAPHY_L3_DESCR,
+        FINANCE_PMF_LEVEL_5_DESC: PMF_ACCOUNT_L5_DESCR,
+        SA_RWA_AMT: SA_RWA,
+        MNGD_SGMT_L2_CDE: MANAGED_SGMNT_L2_ID,
+        MNGD_SGMT_L4_CDE: MANAGED_SGMNT_L4_ID,
+        MNGD_SGMT_L3_CDE: MANAGED_SGMNT_L3_ID,
+        "RWA Exposure Type Description": RWA_EXPOSURE_TYPE,
     }
     rename_dict = {k: v for k, v in rename_dict.items() if k in input_df.columns}
     collisions = [v for v in rename_dict.values() if v in input_df.columns]

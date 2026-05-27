@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import polars as pl
 
 # ---------------------------------------------------------------------------
@@ -155,13 +157,8 @@ BANKING_L2 = "Banking [L2]"
 WEALTH_L2 = "Wealth [L2]"
 SERVICES_L2 = "Services [L2]"
 
-# Balancesheet pivot/melt aliases
-MANAGED_SGMNT_L4_DESC = "Managed Segment L4 Descr"
-MANAGED_SGMNT_L3_DESC = "Managed Segment L3 Descr"
-MANAGED_SGMNT_L2_DESC = "Managed Segment L2 Descr"
-MANAGED_GEO_L4_DESC = "Managed Geography L4 Descr"
-MANAGED_GEO_L3_DESC = "Managed Geography L3 Descr"
-PMF_ACCT_L5_DESC = "PMF Account L5 Descr"
+# Balancesheet geography (L4) + segment id columns
+MANAGED_GEOGRAPHY_L4_DESCR = "Managed Geography L4 Descr"
 MANAGED_SGMNT_L4_ID = "Managed Segment L4 Id"
 MANAGED_SGMNT_L3_ID = "Managed Segment L3 Id"
 MANAGED_SGMNT_L2_ID = "Managed Segment L2 Id"
@@ -186,7 +183,6 @@ GAAP_AMOUNT = "GAAP Amount"
 SA_RWA_AMT = "SA RWA Amount"
 ADV_CG_TOTAL_RWA_AMT = "Adv. CG Total RWA Amount with 1.06 Multiplier"
 ADV_CBNA_TOTAL_RWA_AMT = "Adv. CBNA Total RWA Amount with 1.06 Multiplier"
-QRTR_ID = "Quarter Id"
 MNGD_SGMT_L4_CDE = "Managed Segment Level 4 Code"
 MNGD_SGMT_L3_CDE = "Managed Segment Level 3 Code"
 MNGD_SGMT_L2_CDE = "Managed Segment Level 2 Code"
@@ -195,8 +191,6 @@ MNGD_GEO_L3_DESC = "Managed Geography Level 3 Description"
 MNGD_SGMT_L4_DESC = "Managed Segment Level 4 Description"
 MNGD_SGMT_L3_DESC = "Managed Segment Level 3 Description"
 MNGD_SGMT_L2_DESC = "Managed Segment Level 2 Description"
-MANAGED_SGMNT_L3_ID = "Managed Segment L3 Id"
-MANAGED_SGMNT_L2_ID = "Managed Segment L2 Id"
 
 SA_RWF = "SA RWF"
 AA_RWF = "AA RWF"
@@ -296,3 +290,77 @@ UPLOAD_TEMPLATE_COL_ORDER = [
     RWA_EXPOSURE_TYPE,
     MARKETS_FILTER,
 ]
+
+# ---------------------------------------------------------------------------
+# Entity configuration (CG / CBNA)
+# ---------------------------------------------------------------------------
+# CG and CBNA run through the same pipeline; they differ only in which Advanced
+# RWA column feeds AA RWA, which "Reportable Entity is …" flag selects their
+# rows, and the Entity code stamped on the raw-data output.
+
+
+@dataclass(frozen=True)
+class EntityConfig:
+    name: str          # "CG" / "CBNA"
+    code: str          # "BA" / "BB"  (Entity column on raw data)
+    adv_rwa_col: str   # ADV_CG_TOTAL_RWA_AMT / ADV_CBNA_TOTAL_RWA_AMT
+    reportable_col: str  # REPORTABLE_ENTITY_IS_CG / REPORTABLE_ENTITY_IS_CBNA
+
+
+CG_ENTITY = EntityConfig("CG", "BA", ADV_CG_TOTAL_RWA_AMT, REPORTABLE_ENTITY_IS_CG)
+CBNA_ENTITY = EntityConfig("CBNA", "BB", ADV_CBNA_TOTAL_RWA_AMT, REPORTABLE_ENTITY_IS_CBNA)
+ENTITIES = (CG_ENTITY, CBNA_ENTITY)
+
+# ---------------------------------------------------------------------------
+# 5-key RWF waterfall — single source of truth
+# ---------------------------------------------------------------------------
+# Each key joins an outlook (balance-sheet) row to a convergence RWF pivot on a
+# composite string: <segment id/code> [+ <geography>] + <PMF L5> + <Quarter Id>.
+# Keys run most-specific (Key1) to broadest (Key5). One spec drives all three
+# consumers: create_key_pivots (convergence pivot index), build_outlook_key_strings
+# (outlook-side key), and _apply_waterfall_lookups (convergence-side key + merge).
+
+
+@dataclass(frozen=True)
+class WaterfallKey:
+    name: str                # "Key1".."Key5"
+    outlook_segment_id: str  # balance-sheet segment id column
+    conv_segment_code: str   # convergence segment code column
+    outlook_geo: str | None  # balance-sheet geography column (None = no geo)
+    conv_geo: str | None     # convergence geography column (None = no geo)
+    sa_rwf_col: str          # output SA RWF column on the outlook frame
+    aa_rwf_col: str          # output AA RWF column on the outlook frame
+
+
+# (name, outlook_segment_id, conv_segment_code, outlook_geo, conv_geo)
+_WATERFALL_KEY_DEFS = [
+    ("Key1", MANAGED_SGMNT_L4_ID, MNGD_SGMT_L4_CDE, MANAGED_GEOGRAPHY_L4_DESCR, MNGD_GEO_L4_DESC),
+    ("Key2", MANAGED_SGMNT_L3_ID, MNGD_SGMT_L3_CDE, MANAGED_GEOGRAPHY_L4_DESCR, MNGD_GEO_L4_DESC),
+    ("Key3", MANAGED_SGMNT_L2_ID, MNGD_SGMT_L2_CDE, MANAGED_GEOGRAPHY_L4_DESCR, MNGD_GEO_L4_DESC),
+    ("Key4", MANAGED_SGMNT_L3_ID, MNGD_SGMT_L3_CDE, MANAGED_GEOGRAPHY_L3_DESCR, MNGD_GEO_L3_DESC),
+    ("Key5", MANAGED_SGMNT_L3_ID, MNGD_SGMT_L3_CDE, None, None),
+]
+
+WATERFALL_KEYS = tuple(
+    WaterfallKey(
+        name=name,
+        outlook_segment_id=outlook_seg,
+        conv_segment_code=conv_seg,
+        outlook_geo=outlook_geo,
+        conv_geo=conv_geo,
+        # Key1 lands on the base "SA RWF"/"AA RWF" columns; Key2-5 are suffixed.
+        sa_rwf_col=SA_RWF if i == 0 else f"{SA_RWF}_key{i + 1}",
+        aa_rwf_col=AA_RWF if i == 0 else f"{AA_RWF}_key{i + 1}",
+    )
+    for i, (name, outlook_seg, conv_seg, outlook_geo, conv_geo) in enumerate(_WATERFALL_KEY_DEFS)
+)
+
+# Columns pulled from the adjustments frame onto an outlook frame (left-merge on
+# Key1). Order: the 5 key strings, the RWA values, then every key's RWF columns,
+# then Comment / RWA Exposure Type.
+ADJUSTMENT_MERGE_COLS = (
+    [k.name for k in WATERFALL_KEYS]
+    + [SA_RWA, AA_RWA, ERBA_RWA, SA_RWF, AA_RWF]
+    + [c for k in WATERFALL_KEYS[1:] for c in (k.sa_rwf_col, k.aa_rwf_col)]
+    + ["Comment", RWA_EXPOSURE_TYPE]
+)
