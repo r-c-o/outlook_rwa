@@ -70,9 +70,11 @@ from outlook_rwa.constants import (
     ADV_CG_TOTAL_RWA_AMT,
     ADV_CBNA_TOTAL_RWA_AMT,
     ADDON_PIVOT_INDEX,
+    ERBA_RWA,
+    FINANCE_PMF_LEVEL_5_DESC,
+    QRTR_ID,
     PMF_ACCOUNTS,
     MARKETS_L2,
-    SA_RWA,
     SA_RWA_AMT,
     PROJECTED_QUARTER_TO_MONTH,
     MANAGED_SEGMENT_L4_DESCR,
@@ -326,8 +328,8 @@ def main():
     assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook)
 
     # --- 1.11 Addon: markets / non-waterfall ------------------------------------
-    # Derive YEAR / Month / Quarter Id on the raw rows first (Quarter Id is a
-    # pivot key), then aggregate both add-on buckets to the addon-pivot grain so
+    # Quarter Id is a pivot key, so derive it (via YEAR / Month) on the raw rows
+    # first; both add-on buckets are then aggregated to the addon-pivot grain so
     # the export carries one summarized row per index group instead of one row
     # per raw convergence record.
     for addon_df in [
@@ -341,28 +343,29 @@ def main():
         ).astype("Int64")
         addon_df["Month"] = q_num.map(PROJECTED_QUARTER_TO_MONTH)
         assign_quarter_id(addon_df, quarter_id_mapping)
-        # pivot_table silently drops rows whose index keys are NaN; fill first.
-        addon_df[ADDON_PIVOT_INDEX] = addon_df[ADDON_PIVOT_INDEX].fillna("None")
 
+    # Markets credit-risk: fill null PMF keys, pivot, then add ERBA RWA / Comment
+    # from the aggregated totals (mirrors production's §11 handling; build_addon_pivot
+    # does the equivalent internally for the non-waterfall bucket).
+    cg_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC] = cg_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+    cbna_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC] = cbna_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
     cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk = build_markets_addon_pivot(
         cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, ADDON_PIVOT_INDEX
     )
+    for pivoted in (cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk):
+        pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(pivoted[QRTR_ID].isin(["5", "6"]))
+        pivoted["Comment"] = ""
+
     non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna = build_addon_pivot(
         non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna, ADDON_PIVOT_INDEX
     )
 
-    # Re-derive YEAR / Month (dropped by the pivot) from the surviving Quarter Id,
-    # then derive the RWA metadata from the aggregated totals. ERBA RWA / Comment
-    # / RWA Exposure Type mirror the waterfall path and apply to the Markets
-    # credit-risk add-on only (matching the pre-pivot behaviour).
+    # Re-derive YEAR / Month (dropped by the pivot) from the surviving Quarter Id.
     assign_year_month_from_quarter(
         cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
         non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
         quarter_map=quarter_map,
     )
-    cg_addon_markets_credit_risk[SA_RWA] = cg_addon_markets_credit_risk[SA_RWA_AMT]
-    cbna_addon_markets_credit_risk[SA_RWA] = cbna_addon_markets_credit_risk[SA_RWA_AMT]
-    assign_erba_rwa_and_metadata(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk)
 
     cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa = (
         pd.concat([non_credit_risk_non_waterfall_cg, cg_addon_markets_credit_risk], ignore_index=True),

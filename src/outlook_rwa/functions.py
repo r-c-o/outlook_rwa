@@ -201,18 +201,35 @@ def build_markets_addon_pivot(cg_addon_markets_credit_risk, cbna_addon_markets_c
     return pivoted_cg, pivoted_cbna
 
 
-def build_addon_pivot(non_waterfall_cg, non_waterfall_cbna, addon_pivot_index):
+def build_addon_pivot(non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna, addon_pivot_index):
     """Pivot (sum) the non-waterfall non-credit-risk add-on for CG and CBNA.
 
-    Same aggregation as build_markets_addon_pivot, applied to the other add-on
-    bucket. Returns (pivoted_cg, pivoted_cbna).
+    Fills null PMF L5 keys so those rows survive the pivot, sums the additive
+    RWA amounts to one row per `addon_pivot_index` combination, then derives
+    ERBA RWA (= SA RWA Amount in quarters 5/6) and a blank Comment. Returns
+    (pivoted_cg, pivoted_cbna).
     """
-    pivoted_cg = non_waterfall_cg.pivot_table(
+    non_credit_risk_non_waterfall_cg = non_credit_risk_non_waterfall_cg.copy()
+    non_credit_risk_non_waterfall_cbna = non_credit_risk_non_waterfall_cbna.copy()
+    non_credit_risk_non_waterfall_cg[FINANCE_PMF_LEVEL_5_DESC] = (
+        non_credit_risk_non_waterfall_cg[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+    )
+    non_credit_risk_non_waterfall_cbna[FINANCE_PMF_LEVEL_5_DESC] = (
+        non_credit_risk_non_waterfall_cbna[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+    )
+
+    pivoted_cg = non_credit_risk_non_waterfall_cg.pivot_table(
         values=[SA_RWA_AMT, ADV_CG_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
     ).reset_index()
-    pivoted_cbna = non_waterfall_cbna.pivot_table(
+    pivoted_cbna = non_credit_risk_non_waterfall_cbna.pivot_table(
         values=[SA_RWA_AMT, ADV_CBNA_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
     ).reset_index()
+
+    for pivoted in (pivoted_cg, pivoted_cbna):
+        # Quarter Id is a string here (assign_quarter_id), so the quarter 5/6 test
+        # uses strings rather than production's int literals.
+        pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(pivoted[QRTR_ID].isin(["5", "6"]))
+        pivoted["Comment"] = ""
     return pivoted_cg, pivoted_cbna
 
 
