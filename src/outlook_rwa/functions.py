@@ -63,6 +63,20 @@ def assign_quarter_id(outlook_df, quarter_id_mapping):
     )
 
 
+def assign_year_month_from_quarter(*dfs, quarter_map):
+    """Inverse of assign_quarter_id: derive YEAR / Month from Quarter Id.
+
+    Used after the add-on pivot, where the descriptor rows survive via the pivot
+    index (which carries Quarter Id) but YEAR / Month were dropped. Rows whose
+    Quarter Id is not a known quarter (e.g. 'Unknown') get YEAR / Month = NA,
+    matching the pre-pivot behaviour for unparseable Projected Quarters.
+    """
+    for df in dfs:
+        q = pd.to_numeric(df[QRTR_ID], errors="coerce")
+        df["YEAR"] = q.map(lambda x: quarter_map[int(x)][0] if pd.notna(x) and int(x) in quarter_map else pd.NA).astype("Int64")
+        df["Month"] = q.map(lambda x: quarter_map[int(x)][1] if pd.notna(x) and int(x) in quarter_map else None)
+
+
 def _first_valid_rwf(df, cols):
     """Return the first present (non-null) RWF across cols; a present 0 is valid.
 
@@ -168,6 +182,55 @@ def split_convergence(convergence, pmf_accounts, markets_l2):
         cg_addon_markets_credit_risk,
         cbna_addon_markets_credit_risk,
     )
+
+
+def build_markets_addon_pivot(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, addon_pivot_index):
+    """Pivot (sum) the Markets credit-risk add-on for CG and CBNA.
+
+    Collapses the raw convergence rows to one row per `addon_pivot_index`
+    combination, summing the additive RWA amounts. Without this aggregation the
+    add-on export carries one row per raw record (surplus rows). Returns
+    (pivoted_cg, pivoted_cbna).
+    """
+    pivoted_cg = cg_addon_markets_credit_risk.pivot_table(
+        values=[SA_RWA_AMT, ADV_CG_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
+    ).reset_index()
+    pivoted_cbna = cbna_addon_markets_credit_risk.pivot_table(
+        values=[SA_RWA_AMT, ADV_CBNA_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
+    ).reset_index()
+    return pivoted_cg, pivoted_cbna
+
+
+def build_addon_pivot(non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna, addon_pivot_index):
+    """Pivot (sum) the non-waterfall non-credit-risk add-on for CG and CBNA.
+
+    Fills null PMF L5 keys so those rows survive the pivot, sums the additive
+    RWA amounts to one row per `addon_pivot_index` combination, then derives
+    ERBA RWA (= SA RWA Amount in quarters 5/6) and a blank Comment. Returns
+    (pivoted_cg, pivoted_cbna).
+    """
+    non_credit_risk_non_waterfall_cg = non_credit_risk_non_waterfall_cg.copy()
+    non_credit_risk_non_waterfall_cbna = non_credit_risk_non_waterfall_cbna.copy()
+    non_credit_risk_non_waterfall_cg[FINANCE_PMF_LEVEL_5_DESC] = (
+        non_credit_risk_non_waterfall_cg[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+    )
+    non_credit_risk_non_waterfall_cbna[FINANCE_PMF_LEVEL_5_DESC] = (
+        non_credit_risk_non_waterfall_cbna[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+    )
+
+    pivoted_cg = non_credit_risk_non_waterfall_cg.pivot_table(
+        values=[SA_RWA_AMT, ADV_CG_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
+    ).reset_index()
+    pivoted_cbna = non_credit_risk_non_waterfall_cbna.pivot_table(
+        values=[SA_RWA_AMT, ADV_CBNA_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
+    ).reset_index()
+
+    for pivoted in (pivoted_cg, pivoted_cbna):
+        # Quarter Id is a string here (assign_quarter_id), so the quarter 5/6 test
+        # uses strings rather than production's int literals.
+        pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(pivoted[QRTR_ID].isin(["5", "6"]))
+        pivoted["Comment"] = ""
+    return pivoted_cg, pivoted_cbna
 
 
 def create_key_pivots(crd_df, adv_rwa_col):
@@ -560,6 +623,10 @@ def format_columns_before_pivots(input_df):
 def create_markets_filter(input_df):
     """Mark rows Keep/Remove based on Markets L2 + RWA Exposure Type.
 
+    A row is "Remove" only when it IS Markets [L2] and has a non-zero RWA
+    exposure type; every other row (including the entire non-Markets universe)
+    is "Keep". Matches the nested np.where in production.
+
     Args:
         input_df: DataFrame with MANAGED_SEGMENT_L2_DESCR and RWA_EXPOSURE_TYPE.
 
@@ -570,7 +637,11 @@ def create_markets_filter(input_df):
         (input_df[MANAGED_SEGMENT_L2_DESCR] == MARKETS_L2)
         & (input_df[RWA_EXPOSURE_TYPE] == 0),
         "Keep",
-        "Remove",
+        np.where(
+            input_df[MANAGED_SEGMENT_L2_DESCR] != MARKETS_L2,
+            "Keep",
+            "Remove",
+        ),
     )
     return input_df
 
