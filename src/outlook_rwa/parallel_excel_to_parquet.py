@@ -1,6 +1,3 @@
-import os
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any
@@ -142,7 +139,7 @@ def normalize_nulls(df: pd.DataFrame) -> pd.DataFrame:
 def _flat_schema_from_registry(registry: Dict[str, dict]) -> Dict[str, Any]:
     """Flatten the schema registry to {column: numpy dtype}, mapping polars dtype
     names through POLARS_PANDAS_DTYPE_COMPAT to pandas-compatible dtypes."""
-    from constants import POLARS_PANDAS_DTYPE_COMPAT
+    from .constants import POLARS_PANDAS_DTYPE_COMPAT
     return {
         col: np.dtype(POLARS_PANDAS_DTYPE_COMPAT.get(str(dtype).lower(), str(dtype).lower()))
         for d in registry.values()

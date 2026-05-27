@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-data_dir = Path(__file__).parent / "data" / "input"
+data_dir = Path(__file__).resolve().parents[1] / "data" / "input"
 data_dir.mkdir(parents=True, exist_ok=True)
 
 rng = np.random.default_rng(42)
