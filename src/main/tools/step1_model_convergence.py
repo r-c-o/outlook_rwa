@@ -98,6 +98,16 @@ input_dir = data_dir / "input"
 output_dir = Path(config["outputs"]["step1_dir"])
 if not output_dir.exists() and "step1_dir_backup" in config["outputs"]:
     output_dir = Path(config["outputs"]["step1_dir_backup"])
+# Only create the trailing output subfolders (e.g. output/step1) when their
+# root already exists. This guards against a placeholder/mis-set step1_dir whose
+# root is absent — mkdir(parents=True) would otherwise materialize a whole bogus
+# tree instead of failing.
+output_root = output_dir.parent.parent
+if not output_root.exists():
+    raise FileNotFoundError(
+        f"Cannot create step1 output dir '{output_dir}': its root "
+        f"'{output_root}' does not exist. Check 'step1_dir' in config."
+    )
 output_dir.mkdir(parents=True, exist_ok=True)
 schema_registry = load_schema_registry_from_csv(schema_csv)
 
