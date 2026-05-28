@@ -122,7 +122,7 @@ def main():
     config = load_config(Path(__file__).resolve().parents[2])
 
     Q0 = config["parameters"]["Q0"]
-    export_intermediate_xlsx = config.get("parameters", {}).get("EXPORT_INTERMEDIATE_XLSX", False)
+    export_intermediate_xlsx = config.get("parameters", {}).get("export_intermediate_xlsx", False)
     key_defs = config["parameters"]["waterfall_keys"]
     n_keys = len(key_defs)
 
