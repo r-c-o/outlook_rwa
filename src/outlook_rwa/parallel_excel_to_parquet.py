@@ -1,3 +1,9 @@
+"""Excel file reading and schema inference for Outlook RWA pipeline.
+
+Handles concurrent Excel file reading, Polars schema inference and type coercion,
+parquet caching, and bulk data loading into pandas DataFrames with Oracle-compatible
+types.
+"""
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any

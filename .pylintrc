@@ -1,0 +1,58 @@
+[MASTER]
+# Specify a configuration file.
+#init-hook='import sys; sys.path.append("src")'
+ignore-imports=yes
+load-plugins=pylint.extensions.docparams
+extension-pkg-allow-list=numpy,pandas,polars,pyarrow
+
+[FORMAT]
+max-line-length=99
+indent-string='    '
+
+[MESSAGES CONTROL]
+# C0111: Missing module docstring
+# C0114: Missing module docstring
+# R0913: Too many arguments
+# W0212: Access to protected member
+disable=
+    missing-module-docstring,
+    too-many-arguments,
+    too-many-locals,
+    too-many-branches,
+
+[DESIGN]
+max-attributes=7
+max-arguments=5
+
+[BASIC]
+# Good variable names which should always be accepted, separated by a comma
+good-names=i,j,k,ex,Run,_,x,y,df,ax,pd,np
+
+# Include a hint for the correct naming format with invalid-name
+include-naming-hint=yes
+
+# Naming style matching correct module names
+module-naming-style=snake_case
+
+# Regular expression matching correct function names
+function-rgx=[a-z_][a-z0-9_]*$
+
+# Regular expression matching correct variable names
+variable-rgx=[a-z_][a-z0-9_]*$
+
+# Regular expression matching correct constant names
+const-rgx=(([A-Z_][A-Z0-9_]*)|([a-z_][a-z0-9_]*)|(__.*__)|(_.*))$
+
+# Regular expression matching correct class names
+class-rgx=[A-Z_][a-zA-Z0-9]*$
+
+# Regular expression matching correct class attribute names
+class-attribute-rgx=([A-Za-z_][A-Za-z0-9_]{2,30}|(__.*__))$
+
+[SIMILARITIES]
+min-similarity-lines=5
+ignore-comments=yes
+ignore-docstrings=yes
+
+[DOCSTYLE]
+accept-empty-docstring=yes

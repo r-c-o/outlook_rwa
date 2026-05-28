@@ -1,3 +1,9 @@
+"""Core computation functions for Outlook RWA pipeline.
+
+Provides RWA calculation (SA, AA, ERBA methods), waterfall key computation,
+data transformation, pivot operations, and column formatting utilities used
+by both convergence and outlook RWA stages.
+"""
 import os
 import re
 import warnings

@@ -1,3 +1,8 @@
+"""Constants and dtype mappings for Outlook RWA pipeline.
+
+Defines Polars dtype mappings for Excel/Parquet loading, column name constants,
+and enum definitions for entity types, quarters, and risk categories.
+"""
 import polars as pl
 
 # ---------------------------------------------------------------------------
