@@ -56,6 +56,7 @@ from outlook_rwa.functions import (
     build_convergence_control,
     build_frm_control,
     build_raw_data_control,
+    concat_addon_all
 )
 from outlook_rwa.parallel_excel_to_parquet import (
     load_schema_registry_from_csv,
@@ -363,15 +364,14 @@ def main():
     # Re-derive YEAR / Month (dropped by the pivot) from the surviving Quarter Id.
     assign_year_month_from_quarter(
         cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
-        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
+        # non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
         quarter_map=quarter_map,
     )
 
-    cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa = (
-        pd.concat([non_credit_risk_non_waterfall_cg, cg_addon_markets_credit_risk], ignore_index=True),
-        pd.concat([non_credit_risk_non_waterfall_cbna, cbna_addon_markets_credit_risk], ignore_index=True),
+    cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa = concat_addon_all(
+        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna
     )
-
+    
     print(f"CG addon non-waterfall rows:   {len(cg_addon_non_waterfall_rwa):,}")
     print(f"CBNA addon non-waterfall rows: {len(cbna_addon_non_waterfall_rwa):,}")
 

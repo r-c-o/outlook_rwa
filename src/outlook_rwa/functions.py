@@ -71,11 +71,16 @@ def assign_year_month_from_quarter(*dfs, quarter_map):
     Quarter Id is not a known quarter (e.g. 'Unknown') get YEAR / Month = NA,
     matching the pre-pivot behaviour for unparseable Projected Quarters.
     """
-    for df in dfs:
-        q = pd.to_numeric(df[QRTR_ID], errors="coerce")
-        df["YEAR"] = q.map(lambda x: quarter_map[int(x)][0] if pd.notna(x) and int(x) in quarter_map else pd.NA).astype("Int64")
-        df["Month"] = q.map(lambda x: quarter_map[int(x)][1] if pd.notna(x) and int(x) in quarter_map else None)
-
+    try:
+        for df in dfs:
+            df['YEAR'] = df[QRTR_ID].map(lambda x: quarter_map[x][0])
+            df['Month'] = df[QRTR_ID].map(lambda x: quarter_map[x][1])
+            # q = pd.to_numeric(df[QRTR_ID], errors="coerce")
+            # df["YEAR"] = q.map(lambda x: quarter_map[int(x)][0] if pd.notna(x) and int(x) in quarter_map else pd.NA).astype("Int64")
+            # df["Month"] = q.map(lambda x: quarter_map[int(x)][1] if pd.notna(x) and int(x) in quarter_map else None)
+    except Exception as e:
+        warnings.warn(f"Error assigning YEAR/Month from Quarter Id: {e}")
+        raise e
 
 def _first_valid_rwf(df, cols):
     """Return the first present (non-null) RWF across cols; a present 0 is valid.
@@ -132,12 +137,12 @@ def assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook):
     else NaN. Comment is set to empty string, RWA Exposure Type to 'Banking Book'.
     Modifies DataFrames in place.
     """
-    cg_outlook[ERBA_RWA] = cg_outlook[SA_RWA].where(cg_outlook[QRTR_ID].isin(["5", "6"]))
-    cbna_outlook[ERBA_RWA] = cbna_outlook[SA_RWA].where(cbna_outlook[QRTR_ID].isin(["5", "6"]))
+    cg_outlook[ERBA_RWA] = cg_outlook[SA_RWA].where(cg_outlook[QRTR_ID].isin([5, 6]))
+    cbna_outlook[ERBA_RWA] = cbna_outlook[SA_RWA].where(cbna_outlook[QRTR_ID].isin([5, 6]))
     cg_outlook["Comment"] = ""
-    cg_outlook["RWA Exposure Type"] = "Banking Book"
+
     cbna_outlook["Comment"] = ""
-    cbna_outlook["RWA Exposure Type"] = "Banking Book"
+
 
 
 def split_convergence(convergence, pmf_accounts, markets_l2):
@@ -228,7 +233,7 @@ def build_addon_pivot(non_credit_risk_non_waterfall_cg, non_credit_risk_non_wate
     for pivoted in (pivoted_cg, pivoted_cbna):
         # Quarter Id is a string here (assign_quarter_id), so the quarter 5/6 test
         # uses strings rather than production's int literals.
-        pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(pivoted[QRTR_ID].isin(["5", "6"]))
+        pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(pivoted[QRTR_ID].isin([5, 6]))
         pivoted["Comment"] = ""
     return pivoted_cg, pivoted_cbna
 
@@ -812,3 +817,10 @@ def build_raw_data_control(raw_data_df):
                             columns=QUARTER_ID, values="Month", aggfunc="sum").reset_index()
     ctrl.columns.name = None
     return ctrl
+
+
+
+def concat_addon_all(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna):
+    cg_addon_non_waterfall_rwa = pd.concat([cg_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg], ignore_index=True)
+    cbna_addon_non_waterfall_rwa = pd.concat([cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cbna], ignore_index=True)
+    return cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa
