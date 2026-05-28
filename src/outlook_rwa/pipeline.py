@@ -58,6 +58,7 @@ from outlook_rwa.functions import (
     build_raw_data_control,
     concat_addon_all
 )
+from outlook_rwa.dq import run_all_checks, export_dq_results
 from outlook_rwa.parallel_excel_to_parquet import (
     load_schema_registry_from_csv,
     load_spec_with_fallback,
@@ -527,6 +528,24 @@ def main():
             warnings.warn(
                 f"{label}: PMF RWA mapping has {len(unmatched):,} ({pct:.1f}%) rows with no match!"
             )
+
+    # --- 2.10b DQ checks (before format_columns_before_pivots so join-miss nulls are real NaN) ---
+    dq_results = run_all_checks(
+        convergence=convergence,
+        cg_outlook=cg_outlook,
+        cbna_outlook=cbna_outlook,
+        cg_adjustments=cg_adjustments,
+        cbna_adjustments=cbna_adjustments,
+        frm_output_cg=frm_output_cg,
+        frm_output_cbna=frm_output_cbna,
+        n_keys=n_keys,
+    )
+    dq_parquet_path, dq_xlsx_path = export_dq_results(dq_results, output_dir)
+    print(f"Exported: {dq_xlsx_path}")
+    print(f"Exported: {dq_parquet_path}")
+    n_fail = (dq_results["status"] == "FAIL").sum()
+    n_warn = (dq_results["status"] == "WARN").sum()
+    print(f"DQ summary: {len(dq_results)} checks — {n_fail} FAIL, {n_warn} WARN, {len(dq_results) - n_fail - n_warn} PASS")
 
     # --- 2.11 Format columns before pivots --------------------------------------
     frm_output_cg   = format_columns_before_pivots(frm_output_cg.copy())
