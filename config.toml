@@ -28,3 +28,42 @@ cg_outlook = "cg_outlook.xlsx"
 cbna_outlook = "cbna_outlook.xlsx"
 cg_addon_non_waterfall_rwa = "addon_all_cg.xlsx"
 cbna_addon_non_waterfall_rwa = "addon_all_cbna.xlsx"
+
+[[parameters.waterfall_keys]]
+fields = [
+    {convergence_col = "Managed Segment Level 4 Code", outlook_col = "Managed Segment L4 Id", int_str = true},
+    {convergence_col = "Managed Geography Level 4 Description", outlook_col = "Managed Geography L4 Descr", int_str = false},
+    {convergence_col = "Finance PMF Level 5 Description", outlook_col = "PMF Account L5 Descr", int_str = false},
+    {convergence_col = "Managed Segment Level 2 Description", pivot_only = true},
+]
+
+[[parameters.waterfall_keys]]
+fields = [
+    {convergence_col = "Managed Segment Level 3 Code", outlook_col = "Managed Segment L3 Id", int_str = true},
+    {convergence_col = "Managed Geography Level 4 Description", outlook_col = "Managed Geography L4 Descr", int_str = false},
+    {convergence_col = "Finance PMF Level 5 Description", outlook_col = "PMF Account L5 Descr", int_str = false},
+    {convergence_col = "Managed Segment Level 2 Description", pivot_only = true},
+]
+
+[[parameters.waterfall_keys]]
+fields = [
+    {convergence_col = "Managed Segment Level 2 Code", outlook_col = "Managed Segment L2 Id", int_str = true},
+    {convergence_col = "Managed Geography Level 4 Description", outlook_col = "Managed Geography L4 Descr", int_str = false},
+    {convergence_col = "Finance PMF Level 5 Description", outlook_col = "PMF Account L5 Descr", int_str = false},
+    {convergence_col = "Managed Segment Level 2 Description", pivot_only = true},
+]
+
+[[parameters.waterfall_keys]]
+fields = [
+    {convergence_col = "Managed Segment Level 3 Code", outlook_col = "Managed Segment L3 Id", int_str = true},
+    {convergence_col = "Managed Geography Level 3 Description", outlook_col = "Managed Geography L3 Descr", int_str = false},
+    {convergence_col = "Finance PMF Level 5 Description", outlook_col = "PMF Account L5 Descr", int_str = false},
+    {convergence_col = "Managed Segment Level 2 Description", pivot_only = true},
+]
+
+[[parameters.waterfall_keys]]
+fields = [
+    {convergence_col = "Managed Segment Level 3 Code", outlook_col = "Managed Segment L3 Id", int_str = true},
+    {convergence_col = "Finance PMF Level 5 Description", outlook_col = "PMF Account L5 Descr", int_str = false},
+    {convergence_col = "Managed Segment Level 2 Description", pivot_only = true},
+]

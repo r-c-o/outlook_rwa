@@ -9,7 +9,7 @@ The two stages share memory: the model-convergence outputs (cg_outlook,
 cbna_outlook and the two addon frames) are passed in-process to the outlook-RWA
 stage instead of being re-read from disk. Their parquet artifacts are still
 written for inspection; the bulky xlsx copies are written only when
-EXPORT_INTERMEDIATE_XLSX is True.
+export_intermediate_xlsx is True.
 
 Prerequisite: schema_registry.csv must exist (run create_schema_csv.py first).
 """
@@ -123,6 +123,8 @@ def main():
 
     Q0 = config["parameters"]["Q0"]
     export_intermediate_xlsx = config.get("parameters", {}).get("export_intermediate_xlsx", False)
+    key_defs = config["parameters"]["waterfall_keys"]
+    n_keys = len(key_defs)
 
     schema_csv = Path(config["paths"]["schema_registry_csv"])
     if not schema_csv.exists() and "schema_registry_csv_backup" in config["paths"]:
@@ -197,36 +199,15 @@ def main():
     print(f"CG credit-risk rows:   {len(credit_risk_convergence_cg):,}")
     print(f"CBNA credit-risk rows: {len(credit_risk_convergence_cbna):,}")
 
-    # --- 1.5 Build 5-key pivot tables and compute RWFs --------------------------
-    (
-        cg_waterfall_rwf_lookup_1,
-        cg_waterfall_rwf_lookup_2,
-        cg_waterfall_rwf_lookup_3,
-        cg_waterfall_rwf_lookup_4,
-        cg_waterfall_rwf_lookup_5,
-    ) = create_key_pivots(credit_risk_convergence_cg, ADV_CG_TOTAL_RWA_AMT)
+    # --- 1.5 Build key pivot tables and compute RWFs ----------------------------
+    cg_waterfall_rwf_lookups   = create_key_pivots(credit_risk_convergence_cg,   ADV_CG_TOTAL_RWA_AMT,   key_defs)
+    cbna_waterfall_rwf_lookups = create_key_pivots(credit_risk_convergence_cbna, ADV_CBNA_TOTAL_RWA_AMT, key_defs)
 
-    (
-        cbna_waterfall_rwf_lookup_1,
-        cbna_waterfall_rwf_lookup_2,
-        cbna_waterfall_rwf_lookup_3,
-        cbna_waterfall_rwf_lookup_4,
-        cbna_waterfall_rwf_lookup_5,
-    ) = create_key_pivots(credit_risk_convergence_cbna, ADV_CBNA_TOTAL_RWA_AMT)
-
-    for key_df in [
-        cg_waterfall_rwf_lookup_1, cg_waterfall_rwf_lookup_2,
-        cg_waterfall_rwf_lookup_3, cg_waterfall_rwf_lookup_4,
-        cg_waterfall_rwf_lookup_5,
-    ]:
+    for key_df in cg_waterfall_rwf_lookups:
         compute_rwf(key_df, ADV_CG_TOTAL_RWA_AMT)
         set_markets_rwf(key_df)
 
-    for key_df in [
-        cbna_waterfall_rwf_lookup_1, cbna_waterfall_rwf_lookup_2,
-        cbna_waterfall_rwf_lookup_3, cbna_waterfall_rwf_lookup_4,
-        cbna_waterfall_rwf_lookup_5,
-    ]:
+    for key_df in cbna_waterfall_rwf_lookups:
         compute_rwf(key_df, ADV_CBNA_TOTAL_RWA_AMT)
         set_markets_rwf(key_df)
 
@@ -251,71 +232,47 @@ def main():
     assign_quarter_id(cbna_outlook, quarter_id_mapping)
 
     # --- 1.8 Build waterfall key strings and apply RWF lookups ------------------
-    build_outlook_key_strings(cg_outlook)
-    build_outlook_key_strings(cbna_outlook)
+    build_outlook_key_strings(cg_outlook, key_defs)
+    build_outlook_key_strings(cbna_outlook, key_defs)
 
-    cg_outlook = _apply_waterfall_lookups(
-        cg_outlook,
-        cg_waterfall_rwf_lookup_1,
-        cg_waterfall_rwf_lookup_2,
-        cg_waterfall_rwf_lookup_3,
-        cg_waterfall_rwf_lookup_4,
-        cg_waterfall_rwf_lookup_5,
-    )
-
-    cbna_outlook = _apply_waterfall_lookups(
-        cbna_outlook,
-        cbna_waterfall_rwf_lookup_1,
-        cbna_waterfall_rwf_lookup_2,
-        cbna_waterfall_rwf_lookup_3,
-        cbna_waterfall_rwf_lookup_4,
-        cbna_waterfall_rwf_lookup_5,
-    )
+    cg_outlook   = _apply_waterfall_lookups(cg_outlook,   cg_waterfall_rwf_lookups,   key_defs)
+    cbna_outlook = _apply_waterfall_lookups(cbna_outlook, cbna_waterfall_rwf_lookups, key_defs)
 
     # --- 1.9 Apply adjustments --------------------------------------------------
-    cg_adjustments["Key1"] = (
-        _int_str(cg_adjustments["Managed Segment L4 Id"])
-        + cg_adjustments["Managed Geography L4 Descr"].astype(str)
-        + cg_adjustments["PMF Account L5 Descr"].astype(str)
-        + cg_adjustments["Quarter Id"].astype(str)
-    )
+    key_cols = [f"Key{i + 1}" for i in range(n_keys)]
+    rwf_cols = ["SA RWF", "AA RWF"]
+    for i in range(1, n_keys):
+        rwf_cols += [f"SA RWF_key{i + 1}", f"AA RWF_key{i + 1}"]
+    base_adj_cols = ["Key1", "SA RWA", "AA RWA", "ERBA RWA", "Comment", "RWA Exposure Type"]
+    all_adj_cols = list(dict.fromkeys(base_adj_cols + key_cols[1:] + rwf_cols))
+
+    key1_def = key_defs[0]
+    for adj_df in (cg_adjustments, cbna_adjustments):
+        parts = []
+        for f in key1_def["fields"]:
+            if f.get("pivot_only"):
+                continue
+            col = adj_df[f["outlook_col"]]
+            parts.append(_int_str(col) if f.get("int_str") else col.astype(str))
+        parts.append(adj_df[QUARTER_ID].astype(str))
+        adj_df["Key1"] = parts[0]
+        for part in parts[1:]:
+            adj_df["Key1"] = adj_df["Key1"] + part
+
+    cg_adj_cols  = [c for c in all_adj_cols if c in cg_adjustments.columns]
+    cbna_adj_cols = [c for c in all_adj_cols if c in cbna_adjustments.columns]
 
     cg_outlook = pd.merge(
         cg_outlook,
-        cg_adjustments[[
-            "Key1", "Key2", "Key3", "Key4", "Key5",
-            "SA RWA", "AA RWA", "ERBA RWA",
-            "SA RWF", "AA RWF",
-            "SA RWF_key2", "AA RWF_key2",
-            "SA RWF_key3", "AA RWF_key3",
-            "SA RWF_key4", "AA RWF_key4",
-            "SA RWF_key5", "AA RWF_key5",
-            "Comment", "RWA Exposure Type",
-        ]],
+        cg_adjustments[cg_adj_cols],
         on="Key1",
         how="left",
         suffixes=("", "_adj"),
     )
 
-    cbna_adjustments["Key1"] = (
-        _int_str(cbna_adjustments["Managed Segment L4 Id"])
-        + cbna_adjustments["Managed Geography L4 Descr"].astype(str)
-        + cbna_adjustments["PMF Account L5 Descr"].astype(str)
-        + cbna_adjustments["Quarter Id"].astype(str)
-    )
-
     cbna_outlook = pd.merge(
         cbna_outlook,
-        cbna_adjustments[[
-            "Key1", "Key2", "Key3", "Key4", "Key5",
-            "SA RWA", "AA RWA", "ERBA RWA",
-            "SA RWF", "AA RWF",
-            "SA RWF_key2", "AA RWF_key2",
-            "SA RWF_key3", "AA RWF_key3",
-            "SA RWF_key4", "AA RWF_key4",
-            "SA RWF_key5", "AA RWF_key5",
-            "Comment", "RWA Exposure Type",
-        ]],
+        cbna_adjustments[cbna_adj_cols],
         on="Key1",
         how="left",
         suffixes=("", "_adj"),
@@ -365,7 +322,7 @@ def main():
     # Re-derive YEAR / Month (dropped by the pivot) from the surviving Quarter Id.
     assign_year_month_from_quarter(
         cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
-        # non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
         quarter_map=quarter_map,
     )
 
