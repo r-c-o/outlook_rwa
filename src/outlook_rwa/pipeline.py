@@ -9,7 +9,7 @@ The two stages share memory: the model-convergence outputs (cg_outlook,
 cbna_outlook and the two addon frames) are passed in-process to the outlook-RWA
 stage instead of being re-read from disk. Their parquet artifacts are still
 written for inspection; the bulky xlsx copies are written only when
-EXPORT_INTERMEDIATE_XLSX is True.
+export_intermediate_xlsx is True.
 
 Prerequisite: schema_registry.csv must exist (run create_schema_csv.py first).
 """
@@ -340,7 +340,7 @@ def main():
         config["outputs"]["step1"][0]["cg_addon_non_waterfall_rwa"]: cg_addon_non_waterfall_rwa,
         config["outputs"]["step1"][0]["cbna_addon_non_waterfall_rwa"]: cbna_addon_non_waterfall_rwa,
     }
-    intermediate_formats = ("xlsx", "parquet") if EXPORT_INTERMEDIATE_XLSX else ("parquet",)
+    intermediate_formats = ("xlsx", "parquet") if export_intermediate_xlsx else ("parquet",)
     export_outputs(intermediate_files, model_convergence_dir, formats=intermediate_formats)
 
     # --- 1.13 Hand off to stage 2 in memory -------------------------------------
