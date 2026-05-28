@@ -3,6 +3,9 @@ chat_session.json
 chat_session2.json
 *.jsonl
 
+# Local dev artifacts (session logs, scratch notes) — not tracked
+.dev/
+
 # Local-only files: kept on disk but not tracked
 .claude/
 CLAUDE.md
@@ -12,7 +15,7 @@ __git_log.txt
 __git_tmp.txt
 
 # Machine-specific config override (paths, Q0) — never commit
-config.local.toml
+config/config.local.yaml
 
 # Python
 __pycache__/
@@ -22,6 +25,12 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
 
 # Data files (large / potentially sensitive)
 data/
@@ -41,4 +50,3 @@ parquet_cache/
 desktop.ini
 .DS_Store
 Thumbs.db
-add_dynamic_rwf_keys_and_dq.txt

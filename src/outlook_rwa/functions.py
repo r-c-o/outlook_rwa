@@ -1,15 +1,62 @@
-import os
+"""Core computation functions for Outlook RWA pipeline.
+
+Provides RWA calculation (SA, AA, ERBA methods), waterfall key computation,
+data transformation, pivot operations, and column formatting utilities used
+by both convergence and outlook RWA stages.
+"""
 import re
 import warnings
-import time
-import numpy as np
-import pandas as pd
 from pathlib import Path
 from datetime import datetime
+import numpy as np
+import pandas as pd
 from dateutil.relativedelta import relativedelta
-import polars as pl
-import toml
-from .constants import *
+import yaml
+from .constants import (
+    AA_ACCOUNT_NUM,
+    AA_RWA,
+    AA_RWF,
+    ADV_CBNA_TOTAL_RWA_AMT,
+    ADV_CG_TOTAL_RWA_AMT,
+    DISCONTINUED_OPS_L2,
+    ERBA_RWA,
+    FINANCE_PMF_LEVEL_5_DESC,
+    GAAP_AMOUNT,
+    LATIN_AMERICA,
+    LEGACY_FRANCHISES_L3,
+    LEGACY_HOLDINGS_ASSETS_L4,
+    MANAGED_GEO_L3_DESC,
+    MANAGED_GEO_L4_DESC,
+    MANAGED_GEOGRAPHY_L3_DESCR,
+    MANAGED_SEGMENT_L2_DESCR,
+    MANAGED_SEGMENT_L3_DESCR,
+    MANAGED_SEGMENT_L4_DESCR,
+    MANAGED_SGMNT_L2_DESC,
+    MANAGED_SGMNT_L2_ID,
+    MANAGED_SGMNT_L3_DESC,
+    MANAGED_SGMNT_L3_ID,
+    MANAGED_SGMNT_L4_DESC,
+    MANAGED_SGMNT_L4_ID,
+    MARKETS_FILTER,
+    MARKETS_L2,
+    MNGD_SGMT_L2_DESC,
+    NON_CREDIT_RISK_PMF,
+    PMF_ACCOUNT_L5_DESCR,
+    PMF_ACCT_L5_DESC,
+    QRTR_ID,
+    QUARTER_ID,
+    REPORTABLE_ENTITY_IS_CBNA,
+    REPORTABLE_ENTITY_IS_CG,
+    REPORTING_LAYER,
+    RWA_CALC,
+    RWA_EXPOSURE_TYPE,
+    SA_ACCOUNT_NUM,
+    SA_RWA,
+    SA_RWA_AMT,
+    SA_RWF,
+    UPLOAD_TEMPLATE_COL_ORDER,
+    UPLOAD_TEMPLATE_MONTH_STUBS,
+)
 
 
 # =============================================================================
@@ -32,17 +79,30 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def load_config(config_dir):
-    """Load config.toml and merge an optional git-ignored config.local.toml over it.
+    """Load config.yaml and merge an optional git-ignored config.local.yaml.
 
-    Machine-specific values (paths, Q0) belong in config.local.toml so they stay
+    Machine-specific values (paths, Q0) belong in config.local.yaml so they stay
     out of version control and never conflict on `git pull`. Falls back to
-    config.toml alone when no local override exists.
+    config.yaml alone when no local override exists.
+
+    Args:
+        config_dir: Path to the directory containing `config.yaml` (and
+            optionally `config.local.yaml`).
+
+    Returns:
+        Merged configuration dict with local overrides applied.
+
+    Raises:
+        FileNotFoundError: If `config.yaml` does not exist in `config_dir`.
     """
     config_dir = Path(config_dir)
-    config = toml.load(config_dir / "config.toml")
-    local_path = config_dir / "config.local.toml"
+    with open(config_dir / "config.yaml", "r", encoding="utf-8") as fh:
+        config = yaml.safe_load(fh) or {}
+    local_path = config_dir / "config.local.yaml"
     if local_path.exists():
-        config = _deep_merge(config, toml.load(local_path))
+        with open(local_path, "r", encoding="utf-8") as fh:
+            local = yaml.safe_load(fh) or {}
+        config = _deep_merge(config, local)
     return config
 
 
@@ -54,23 +114,46 @@ def _int_str(series: pd.Series) -> pd.Series:
 
 
 def assign_quarter_id(outlook_df, quarter_id_mapping):
-    """
-    Assigns Quarter Id to the outlook DataFrame based on YEAR and Month columns
-    using the provided mapping. If no match is found, assigns 'Unknown'.
+    """Assign Quarter Id to the outlook DataFrame based on YEAR and Month columns.
+
+    Uses the provided mapping. If no match is found, assigns 'Unknown'.
     Modifies the DataFrame in place.
+
+    Args:
+        outlook_df: DataFrame with YEAR and Month columns to map onto quarter IDs.
+        quarter_id_mapping: Dict mapping (year, month_abbr) tuples to quarter ID strings.
     """
     outlook_df[QRTR_ID] = outlook_df[["YEAR", "Month"]].apply(
         lambda row: quarter_id_mapping.get((row["YEAR"], row["Month"]), "Unknown"), axis=1
     )
 
 
-def assign_year_month_from_quarter(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna, quarter_map):
-    """Inverse of assign_quarter_id: derive YEAR / Month from Quarter Id.
+def assign_year_month_from_quarter(
+        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
+        quarter_map):
+    """Derive YEAR and Month from Quarter Id — the inverse of assign_quarter_id.
 
     Used after the add-on pivot, where the descriptor rows survive via the pivot
     index (which carries Quarter Id) but YEAR / Month were dropped. Rows whose
     Quarter Id is not a known quarter (e.g. 'Unknown') get YEAR / Month = NA,
     matching the pre-pivot behaviour for unparseable Projected Quarters.
+
+    Args:
+        cg_addon_markets_credit_risk: CG Markets credit-risk add-on DataFrame;
+            modified in place.
+        cbna_addon_markets_credit_risk: CBNA Markets credit-risk add-on DataFrame;
+            modified in place.
+        non_credit_risk_non_waterfall_cg: CG non-waterfall non-credit-risk DataFrame;
+            modified in place.
+        non_credit_risk_non_waterfall_cbna: CBNA non-waterfall non-credit-risk DataFrame;
+            modified in place.
+        quarter_map: Dict mapping quarter number to (year, month_abbr) tuple, as
+            returned by build_quarter_mappings.
+
+    Raises:
+        Exception: Re-raises any exception after emitting a warning, so callers
+            see the original error.
     """
     try:
         year_map = {int(k): v[0] for k, v in quarter_map.items()}
@@ -85,7 +168,10 @@ def assign_year_month_from_quarter(cg_addon_markets_credit_risk, cbna_addon_mark
 
             bad_vals = df.loc[q.isna() & df[QRTR_ID].notna(), QRTR_ID].drop_duplicates().to_list()
             if bad_vals:
-                warnings.warn(f"{name}: Unrecognized Quarter Id values (set to NA for YEAR/Month): {bad_vals}")
+                warnings.warn(
+                    f"{name}: Unrecognized Quarter Id values "
+                    f"(set to NA for YEAR/Month): {bad_vals}"
+                )
 
             df['YEAR'] = q.map(year_map).astype("Int64")
             df['Month'] = q.map(month_map)
@@ -108,6 +194,16 @@ def _first_valid_rwf(df, cols):
 
 
 def calculate_sa_rwa(df):
+    """Compute SA RWA via the waterfall RWF and store results in-place.
+
+    Applies the first valid SA RWF from the waterfall key columns (Key1 through
+    KeyN) to the Balances column. Non-credit-risk PMF accounts are zeroed out.
+    Modifies df in place.
+
+    Args:
+        df: Outlook DataFrame containing Balances, SA RWF, any SA RWF_keyN columns,
+            and PMF_ACCT_L5_DESC.
+    """
     key_cols = sorted([c for c in df.columns if c.startswith("SA RWF_key")])
     rwf_columns = [SA_RWF] + key_cols
     df["FINAL_SA_RWF"] = _first_valid_rwf(df, rwf_columns)
@@ -119,6 +215,16 @@ def calculate_sa_rwa(df):
 
 
 def calculate_aa_rwa(df):
+    """Compute AA RWA via the waterfall RWF and store results in-place.
+
+    Applies the first valid AA RWF from the waterfall key columns (Key1 through
+    KeyN) to the Balances column. Non-credit-risk PMF accounts are zeroed out.
+    Modifies df in place.
+
+    Args:
+        df: Outlook DataFrame containing Balances, AA RWF, any AA RWF_keyN columns,
+            and PMF_ACCT_L5_DESC.
+    """
     key_cols = sorted([c for c in df.columns if c.startswith("AA RWF_key")])
     rwf_columns = [AA_RWF] + key_cols
     df["FINAL_AA_RWF"] = _first_valid_rwf(df, rwf_columns)
@@ -130,17 +236,20 @@ def calculate_aa_rwa(df):
 
 
 def assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook):
-    """
-    Assign ERBA RWA, Comment, and RWA Exposure Type columns to CG and CBNA
-    outlook DataFrames. ERBA RWA is set to SA RWA where QRTR_ID is '5' or '6',
-    else NaN. Comment is set to empty string, RWA Exposure Type to 'Banking Book'.
-    Modifies DataFrames in place.
+    """Assign ERBA RWA and Comment columns to CG and CBNA outlook DataFrames.
+
+    ERBA RWA is set to SA RWA where QRTR_ID is 5 or 6 (int or string),
+    else NaN. Comment is set to empty string. Modifies DataFrames in place.
+
+    Args:
+        cg_outlook: CG outlook DataFrame; modified in place.
+        cbna_outlook: CBNA outlook DataFrame; modified in place.
     """
     cg_outlook[ERBA_RWA] = cg_outlook[SA_RWA].where(
-        cg_outlook[QRTR_ID].isin([5, 6]) | 
+        cg_outlook[QRTR_ID].isin([5, 6]) |
         cg_outlook[QRTR_ID].isin(['5', '6']))
     cbna_outlook[ERBA_RWA] = cbna_outlook[SA_RWA].where(
-        cbna_outlook[QRTR_ID].isin([5, 6]) | 
+        cbna_outlook[QRTR_ID].isin([5, 6]) |
         cbna_outlook[QRTR_ID].isin(['5', '6']))
     cg_outlook["Comment"] = ""
 
@@ -149,7 +258,23 @@ def assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook):
 
 
 def split_convergence(convergence, pmf_accounts, markets_l2):
-    """Split convergence into mutually exclusive credit-risk, non-waterfall, and Markets add-on buckets."""
+    """Split convergence into mutually exclusive credit-risk, non-waterfall, and Markets add-on
+    buckets.
+
+    Args:
+        convergence: Raw convergence DataFrame containing entity flags, PMF L5
+            descriptions, and managed segment L2 descriptions.
+        pmf_accounts: Collection of PMF L5 description values that qualify as
+            credit-risk accounts.
+        markets_l2: Managed Segment L2 description string identifying the Markets
+            segment (used for the add-on bucket).
+
+    Returns:
+        Tuple of six DataFrames:
+        (credit_risk_convergence_cg, credit_risk_convergence_cbna,
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
+        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk).
+    """
     credit_risk_convergence_cg = convergence[
         (convergence[REPORTABLE_ENTITY_IS_CG] == "Y") &
         (convergence[FINANCE_PMF_LEVEL_5_DESC].isin(pmf_accounts))
@@ -192,13 +317,25 @@ def split_convergence(convergence, pmf_accounts, markets_l2):
     )
 
 
-def build_markets_addon_pivot(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, addon_pivot_index):
+def build_markets_addon_pivot(
+        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
+        addon_pivot_index):
     """Pivot (sum) the Markets credit-risk add-on for CG and CBNA.
 
     Collapses the raw convergence rows to one row per `addon_pivot_index`
     combination, summing the additive RWA amounts. Without this aggregation the
-    add-on export carries one row per raw record (surplus rows). Returns
-    (pivoted_cg, pivoted_cbna).
+    add-on export carries one row per raw record (surplus rows).
+
+    Args:
+        cg_addon_markets_credit_risk: CG Markets add-on DataFrame filtered from
+            convergence.
+        cbna_addon_markets_credit_risk: CBNA Markets add-on DataFrame filtered from
+            convergence.
+        addon_pivot_index: List of column names to use as the pivot index.
+
+    Returns:
+        Tuple of (pivoted_cg, pivoted_cbna) DataFrames with SA/AA RWA amounts
+        summed per index group.
     """
     pivoted_cg = cg_addon_markets_credit_risk.pivot_table(
         values=[SA_RWA_AMT, ADV_CG_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
@@ -209,13 +346,25 @@ def build_markets_addon_pivot(cg_addon_markets_credit_risk, cbna_addon_markets_c
     return pivoted_cg, pivoted_cbna
 
 
-def build_addon_pivot(non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna, addon_pivot_index):
+def build_addon_pivot(
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
+        addon_pivot_index):
     """Pivot (sum) the non-waterfall non-credit-risk add-on for CG and CBNA.
 
     Fills null PMF L5 keys so those rows survive the pivot, sums the additive
     RWA amounts to one row per `addon_pivot_index` combination, then derives
-    ERBA RWA (= SA RWA Amount in quarters 5/6) and a blank Comment. Returns
-    (pivoted_cg, pivoted_cbna).
+    ERBA RWA (= SA RWA Amount in quarters 5/6) and a blank Comment.
+
+    Args:
+        non_credit_risk_non_waterfall_cg: CG non-waterfall non-credit-risk DataFrame
+            filtered from convergence.
+        non_credit_risk_non_waterfall_cbna: CBNA non-waterfall non-credit-risk DataFrame
+            filtered from convergence.
+        addon_pivot_index: List of column names to use as the pivot index.
+
+    Returns:
+        Tuple of (pivoted_cg, pivoted_cbna) DataFrames with ERBA RWA and Comment
+        columns set.
     """
     non_credit_risk_non_waterfall_cg = non_credit_risk_non_waterfall_cg.copy()
     non_credit_risk_non_waterfall_cbna = non_credit_risk_non_waterfall_cbna.copy()
@@ -237,14 +386,26 @@ def build_addon_pivot(non_credit_risk_non_waterfall_cg, non_credit_risk_non_wate
         # Quarter Id is a string here (assign_quarter_id), so the quarter 5/6 test
         # uses strings rather than production's int literals.
         pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(
-            pivoted[QRTR_ID].isin([5, 6]) | 
+            pivoted[QRTR_ID].isin([5, 6]) |
             pivoted[QRTR_ID].isin(['5', '6']))
         pivoted["Comment"] = ""
     return pivoted_cg, pivoted_cbna
 
 
 def create_key_pivots(crd_df, adv_rwa_col, key_defs):
-    """Create pivot tables for a given entity's credit-risk data, one per key_def."""
+    """Create pivot tables for a given entity's credit-risk data, one per key_def.
+
+    Args:
+        crd_df: Credit-risk convergence DataFrame for one entity (CG or CBNA).
+        adv_rwa_col: Name of the Adv. RWA column specific to this entity
+            (e.g. ADV_CG_TOTAL_RWA_AMT or ADV_CBNA_TOTAL_RWA_AMT).
+        key_defs: List of waterfall key definition dicts from config, each
+            specifying the convergence columns that form the pivot index.
+
+    Returns:
+        List of pivot DataFrames (one per key_def), indexed by the key columns
+        and summing GAAP Amount, SA RWA Amount, and the entity Adv. RWA column.
+    """
     pivots = []
     for key_def in key_defs:
         seen = set()
@@ -262,16 +423,39 @@ def create_key_pivots(crd_df, adv_rwa_col, key_defs):
 
 
 def compute_rwf(key_df, adv_rwa_col):
-    """Compute SA RWF and AA RWF, cap at abs(12.5), set out-of-range to 1."""
-    key_df[SA_RWF] = pd.to_numeric(key_df[SA_RWA_AMT], errors="coerce") / pd.to_numeric(key_df[GAAP_AMOUNT], errors="coerce")
+    """Compute SA RWF and AA RWF, cap at abs(12.5), set out-of-range to 1.
+
+    Args:
+        key_df: Pivot DataFrame (from create_key_pivots) containing GAAP Amount,
+            SA RWA Amount, and the entity Adv. RWA column.
+        adv_rwa_col: Name of the Adv. RWA column to use for AA RWF computation.
+
+    Returns:
+        key_df with SA_RWF and AA_RWF columns added/updated in place.
+    """
+    key_df[SA_RWF] = (
+        pd.to_numeric(key_df[SA_RWA_AMT], errors="coerce")
+        / pd.to_numeric(key_df[GAAP_AMOUNT], errors="coerce")
+    )
     key_df.loc[key_df[SA_RWF].abs() > 12.5, SA_RWF] = 1
-    key_df[AA_RWF] = pd.to_numeric(key_df[adv_rwa_col], errors="coerce") / pd.to_numeric(key_df[GAAP_AMOUNT], errors="coerce")
+    key_df[AA_RWF] = (
+        pd.to_numeric(key_df[adv_rwa_col], errors="coerce")
+        / pd.to_numeric(key_df[GAAP_AMOUNT], errors="coerce")
+    )
     key_df.loc[key_df[AA_RWF].abs() > 12.5, AA_RWF] = 1
     return key_df
 
 
 def set_markets_rwf(key_df):
-    """Null out RWFs for Markets rows (they get add-on treatment instead)."""
+    """Null out RWFs for Markets rows (they get add-on treatment instead).
+
+    Args:
+        key_df: Pivot DataFrame with a MNGD_SGMT_L2_DESC index level and SA_RWF /
+            AA_RWF columns.
+
+    Returns:
+        key_df with SA_RWF and AA_RWF set to NaN for Markets-segment rows.
+    """
     is_markets = key_df.index.get_level_values(MNGD_SGMT_L2_DESC).isin([MARKETS_L2])
     key_df[SA_RWF] = key_df[SA_RWF].where(~is_markets)
     key_df[AA_RWF] = key_df[AA_RWF].where(~is_markets)
@@ -280,7 +464,14 @@ def set_markets_rwf(key_df):
 
 def build_outlook_key_strings(outlook_df, key_defs):
     """Build composite key strings for the waterfall on an outlook DataFrame.
-    Modifies the DataFrame in place.
+
+    Writes Key1…KeyN columns by concatenating the outlook columns specified in
+    each key_def plus the Quarter Id. Modifies the DataFrame in place.
+
+    Args:
+        outlook_df: Long-format outlook DataFrame to annotate with key columns.
+        key_defs: List of waterfall key definition dicts from config, each
+            specifying outlook_col, int_str, and pivot_only fields.
     """
     for i, key_def in enumerate(key_defs):
         parts = []
@@ -297,7 +488,12 @@ def build_outlook_key_strings(outlook_df, key_defs):
 
 def rename_month_columns(df):
     """Rename M*_USDOLLAR columns to quarter month names (Mar, Jun, Sep, Dec).
+
     Modifies df in place.
+
+    Args:
+        df: Balance sheet DataFrame containing M3_USDOLLAR, M6_USDOLLAR,
+            M9_USDOLLAR, and M12_USDOLLAR columns.
     """
     df["Mar"] = df["M3_USDOLLAR"]
     df["Jun"] = df["M6_USDOLLAR"]
@@ -307,7 +503,14 @@ def rename_month_columns(df):
 
 def create_quarterly_pivot(df):
     """Pivot the balance sheet DataFrame to sum quarterly balances by key dimensions.
-    Returns the pivoted DataFrame.
+
+    Args:
+        df: Balance sheet DataFrame with Mar/Jun/Sep/Dec balance columns and the
+            standard segment/geography/PMF index columns.
+
+    Returns:
+        Pivoted DataFrame with one row per unique index combination and summed
+        quarterly balance columns.
     """
     pivot_index = [
         "YEAR",
@@ -329,7 +532,16 @@ def create_quarterly_pivot(df):
 
 
 def melt_quarterly_pivot(pivot_df):
-    """Melt a quarterly pivot DataFrame to long format with Month and Balances columns."""
+    """Melt a quarterly pivot DataFrame to long format with Month and Balances columns.
+
+    Args:
+        pivot_df: Wide-format DataFrame from create_quarterly_pivot with Mar/Jun/Sep/Dec
+            value columns.
+
+    Returns:
+        Long-format DataFrame with Month (Mar/Jun/Sep/Dec) and Balances columns,
+        one row per index-combination/month pair.
+    """
     melt_id_vars = [
         "YEAR",
         MANAGED_SGMNT_L4_DESC,
@@ -352,9 +564,18 @@ def melt_quarterly_pivot(pivot_df):
 
 
 def check_and_get_max_quarters(convergence, cg_outlook, cbna_outlook):
-    """
-    Checks that the number of unique quarters in convergence and both outlooks match.
-    Returns the maximum number of quarters found. Warns if there is a mismatch.
+    """Check that quarter counts match across all inputs and return the maximum.
+
+    Emits a warning if the number of unique quarters differs between convergence
+    and either outlook. Prints a confirmation message when all three agree.
+
+    Args:
+        convergence: Convergence DataFrame with a 'Quarter Id' column.
+        cg_outlook: CG long-format outlook DataFrame with YEAR and Month columns.
+        cbna_outlook: CBNA long-format outlook DataFrame with YEAR and Month columns.
+
+    Returns:
+        Maximum number of quarters found across all three inputs.
     """
     cg_unique_year_months = (
         cg_outlook[["YEAR", "Month"]].drop_duplicates().sort_values(["YEAR", "Month"])
@@ -367,7 +588,7 @@ def check_and_get_max_quarters(convergence, cg_outlook, cbna_outlook):
     num_cg_quarters = cg_unique_year_months.shape[0]
     num_cbna_quarters = cbna_unique_year_months.shape[0]
 
-    if not (num_convergence_quarters == num_cg_quarters == num_cbna_quarters):
+    if num_convergence_quarters != num_cg_quarters or num_cg_quarters != num_cbna_quarters:
         warnings.warn(
             f"Quarter count mismatch: "
             f"convergence={num_convergence_quarters}, "
@@ -375,7 +596,10 @@ def check_and_get_max_quarters(convergence, cg_outlook, cbna_outlook):
             f"CBNA outlook={num_cbna_quarters}"
         )
     else:
-        print(f"✅ Quarter counts match across convergence and both outlooks: {num_convergence_quarters}")
+        print(
+            f"✅ Quarter counts match across convergence and both outlooks: "
+            f"{num_convergence_quarters}"
+        )
 
     max_quarters = max(num_convergence_quarters, num_cg_quarters, num_cbna_quarters)
     print(f"Max quarters found: {max_quarters}")
@@ -383,12 +607,17 @@ def check_and_get_max_quarters(convergence, cg_outlook, cbna_outlook):
 
 
 def build_quarter_mappings(Q0, max_quarters):
-    """
-    Build quarter_map and quarter_id_mapping based on Q0 and max_quarters.
+    """Build quarter_map and quarter_id_mapping based on Q0 and max_quarters.
+
+    Args:
+        Q0: Base quarter date string in 'Mon YYYY' format (e.g. 'Mar 2024'),
+            representing the first outlook quarter.
+        max_quarters: Total number of quarters to map; each quarter spans 3 months.
 
     Returns:
-        quarter_map: dict of quarter_number -> (year, month_abbr)
-        quarter_id_mapping: dict of (year, month_abbr) -> quarter_number_str
+        Tuple of (quarter_map, quarter_id_mapping) where quarter_map is a dict
+        of quarter_number -> (year, month_abbr) and quarter_id_mapping is a dict
+        of (year, month_abbr) -> quarter_number_str.
     """
     quarter_map = {}
     quarter_id_mapping = {}
@@ -449,7 +678,16 @@ def _apply_waterfall_lookups(outlook_df, lookups, key_defs):
 # =============================================================================
 
 def format_adjustments(input_df):
-    """Coerce RWF/Balances columns to numeric, then fill NaN (0 numeric, 'N/A' text)."""
+    """Coerce RWF/Balances columns to numeric, then fill NaN (0 numeric, 'N/A' text).
+
+    Args:
+        input_df: Adjustments DataFrame with Balances, SA RWF, AA RWF, and any
+            SA/AA RWF_keyN columns.
+
+    Returns:
+        input_df with numeric columns coerced and NaN filled (0 for numeric,
+        'N/A' for string columns).
+    """
     key_rwf_cols = sorted([c for c in input_df.columns if re.match(r"(SA|AA) RWF_key\d+$", c)])
     cols_to_num = ["Balances", "SA RWF", "AA RWF"] + key_rwf_cols
     for c in cols_to_num:
@@ -476,6 +714,15 @@ def rename_addon_columns(input_df, entity):
     copies are dropped first and the fully-populated convergence columns take
     their place. Quarter Id is intentionally not renamed (it already matches),
     so it survives into the downstream concat.
+
+    Args:
+        input_df: Add-on DataFrame with convergence-style long column names.
+        entity: Entity identifier string, either 'CG' or 'CBNA', used to select
+            the correct Adv. RWA column.
+
+    Returns:
+        New DataFrame with convergence column names replaced by outlook-style
+        short names and collision columns dropped.
     """
     adv_col = f'Adv. {entity.upper()} Total RWA Amount with 1.06 Multiplier'
     rename_dict = {
@@ -516,7 +763,9 @@ def legacy_franchises_breakout(input_df):
     legacy          = input_df[input_df[MANAGED_SEGMENT_L3_DESCR] == LEGACY_FRANCHISES_L3].copy()
     legacy_holdings = legacy[legacy[MANAGED_SEGMENT_L4_DESCR] == LEGACY_HOLDINGS_ASSETS_L4].copy()
 
-    legacy_non_holdings = legacy[legacy[MANAGED_SEGMENT_L4_DESCR] != LEGACY_HOLDINGS_ASSETS_L4].copy()
+    legacy_non_holdings = legacy[
+        legacy[MANAGED_SEGMENT_L4_DESCR] != LEGACY_HOLDINGS_ASSETS_L4
+    ].copy()
 
     non_legacy      = input_df[input_df[MANAGED_SEGMENT_L3_DESCR] != LEGACY_FRANCHISES_L3].copy()
     non_latin       = non_legacy[non_legacy[MANAGED_GEOGRAPHY_L3_DESCR] != LATIN_AMERICA].copy()
@@ -547,9 +796,11 @@ def format_columns_before_pivots(input_df):
 
     # Fill NaN pivot-key strings with 'None' so group-by/pivot does not drop
     # NaN-keyed rows (which would empty the upload template).
-    for col in [MANAGED_SEGMENT_L4_DESCR, MANAGED_SEGMENT_L3_DESCR, MANAGED_SEGMENT_L2_DESCR,
-                PMF_ACCOUNT_L5_DESCR, 'Entity', REPORTING_LAYER,
-                SA_ACCOUNT_NUM, AA_ACCOUNT_NUM, 'PUG']:
+    for col in [
+        MANAGED_SEGMENT_L4_DESCR, MANAGED_SEGMENT_L3_DESCR, MANAGED_SEGMENT_L2_DESCR,
+        PMF_ACCOUNT_L5_DESCR, 'Entity', REPORTING_LAYER,
+        SA_ACCOUNT_NUM, AA_ACCOUNT_NUM, 'PUG',
+    ]:
         if col in input_df.columns:
             input_df[col] = input_df[col].fillna('None')
     return input_df
@@ -597,7 +848,9 @@ def create_upload_template_pivots(input_df):
     input_df = input_df.fillna(0)
     # Integer quarter labels so the downstream integer-label reorder/rename/agg
     # match regardless of any float coercion upstream.
-    input_df[QUARTER_ID] = pd.to_numeric(input_df[QUARTER_ID], errors="coerce").fillna(0).astype(int)
+    input_df[QUARTER_ID] = (
+        pd.to_numeric(input_df[QUARTER_ID], errors="coerce").fillna(0).astype(int)
+    )
 
     pivot_index = [
         MANAGED_SEGMENT_L4_DESCR,
@@ -648,6 +901,15 @@ def format_upload_template(input_df):
     SA/AA account numbers per RWA Calc type (defaulting missing ones), adds the
     month placeholder columns, drops the now-redundant SA/AA account columns and
     reorders to the production upload layout.
+
+    Args:
+        input_df: Concatenated pivot DataFrame from create_upload_template_pivots
+            containing ERBA, AA, and SA rows with RWA_CALC, SA_ACCOUNT_NUM,
+            and AA_ACCOUNT_NUM columns.
+
+    Returns:
+        Formatted DataFrame in the production upload column order, with stub
+        columns filled and numeric columns zeroed where NaN.
     """
     input_df = input_df.copy()
 
@@ -704,12 +966,23 @@ def build_convergence_control(convergence_df, entity_filter_col, adv_rwa_col):
 
     Filters to the entity (CG/CBNA), excludes Discontinued Ops, then melts SA/AA
     into an RWA Calc dimension and pivots quarters across the columns.
+
+    Args:
+        convergence_df: Raw convergence DataFrame with entity flags, segment
+            descriptions, and RWA amount columns.
+        entity_filter_col: Column name whose value 'Y' identifies rows belonging
+            to the target entity (REPORTABLE_ENTITY_IS_CG or REPORTABLE_ENTITY_IS_CBNA).
+        adv_rwa_col: Name of the Adv. RWA column to rename to AA RWA for this entity.
+
+    Returns:
+        Wide-format control DataFrame indexed by L2 segment and RWA Calc type,
+        with one column per Quarter Id.
     """
-    MNGED = "Managed Segment Level 2 Description"
+    mnged = "Managed Segment Level 2 Description"
     ctrl = convergence_df[convergence_df[entity_filter_col] == "Y"].copy()
-    ctrl = ctrl[ctrl[MNGED] != DISCONTINUED_OPS_L2]
+    ctrl = ctrl[ctrl[mnged] != DISCONTINUED_OPS_L2]
     ctrl = ctrl.rename(columns={adv_rwa_col: AA_RWA, "SA RWA Amount": SA_RWA,
-                                MNGED: MANAGED_SEGMENT_L2_DESCR})
+                                mnged: MANAGED_SEGMENT_L2_DESCR})
     ctrl = ctrl.groupby([MANAGED_SEGMENT_L2_DESCR, QUARTER_ID]).agg(
         {SA_RWA: "sum", AA_RWA: "sum"}).reset_index()
     ctrl = ctrl.melt(id_vars=[MANAGED_SEGMENT_L2_DESCR, QUARTER_ID],
@@ -725,6 +998,14 @@ def build_frm_control(frm_output_df):
 
     Sums the quarter columns (1-7) and the actuals column, mapping the AA/SA
     pivot labels to the canonical RWA names and dropping ERBA.
+
+    Args:
+        frm_output_df: Formatted upload template DataFrame from format_upload_template
+            with RWA Actuals and integer quarter columns 1-7.
+
+    Returns:
+        Summary DataFrame grouped by L2 segment and RWA Calc, with ERBA rows
+        excluded and RWA Calc values mapped to canonical AA/SA RWA names.
     """
     ctrl = frm_output_df.groupby([MANAGED_SEGMENT_L2_DESCR, RWA_CALC]).agg(
         {"RWA Actuals": "sum", 1: "sum", 2: "sum", 3: "sum", 4: "sum",
@@ -736,7 +1017,16 @@ def build_frm_control(frm_output_df):
 
 
 def build_raw_data_control(raw_data_df):
-    """Summarise raw data SA/AA RWA by L2 segment x quarter for the control file."""
+    """Summarise raw data SA/AA RWA by L2 segment x quarter for the control file.
+
+    Args:
+        raw_data_df: Raw data DataFrame (pre-legacy-breakout) with MANAGED_SEGMENT_L2_DESCR,
+            QUARTER_ID, SA_RWA, and AA_RWA columns.
+
+    Returns:
+        Wide-format control DataFrame indexed by L2 segment and RWA Calc type,
+        with one column per Quarter Id.
+    """
     ctrl = raw_data_df.copy()
     ctrl[QUARTER_ID] = pd.to_numeric(ctrl[QUARTER_ID], errors="coerce")
     ctrl = ctrl.groupby([MANAGED_SEGMENT_L2_DESCR, QUARTER_ID]).agg(
@@ -750,7 +1040,27 @@ def build_raw_data_control(raw_data_df):
 
 
 
-def concat_addon_all(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna):
-    cg_addon_non_waterfall_rwa = pd.concat([cg_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg], ignore_index=True)
-    cbna_addon_non_waterfall_rwa = pd.concat([cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cbna], ignore_index=True)
+def concat_addon_all(
+        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna):
+    """Concatenate Markets and non-waterfall add-on frames for each entity.
+
+    Args:
+        cg_addon_markets_credit_risk: Pivoted CG Markets credit-risk add-on DataFrame.
+        cbna_addon_markets_credit_risk: Pivoted CBNA Markets credit-risk add-on DataFrame.
+        non_credit_risk_non_waterfall_cg: Pivoted CG non-waterfall non-credit-risk DataFrame.
+        non_credit_risk_non_waterfall_cbna: Pivoted CBNA non-waterfall non-credit-risk DataFrame.
+
+    Returns:
+        Tuple of (cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa) DataFrames,
+        each combining Markets and non-waterfall rows for the respective entity.
+    """
+    cg_addon_non_waterfall_rwa = pd.concat(
+        [cg_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg],
+        ignore_index=True,
+    )
+    cbna_addon_non_waterfall_rwa = pd.concat(
+        [cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cbna],
+        ignore_index=True,
+    )
     return cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa

@@ -1,0 +1,87 @@
+# Example config — copy to config/config.yaml and edit, or create
+# config/config.local.yaml with just the keys you want to override.
+#
+# Local overrides are deep-merged over this file at load time, so machine-
+# specific paths never need to live in git. See `load_config` in
+# src/outlook_rwa/functions.py.
+
+parameters:
+  # Starting quarter of the projection horizon — "Month YYYY" format
+  Q0: "Mar 2025"
+  export_intermediate_xlsx: "False"
+  waterfall_keys:
+    - fields:
+        - convergence_col: "Managed Segment Level 4 Code"
+          outlook_col: "Managed Segment L4 Id"
+          int_str: true
+        - convergence_col: "Managed Geography Level 4 Description"
+          outlook_col: "Managed Geography L4 Descr"
+          int_str: false
+        - convergence_col: "Finance PMF Level 5 Description"
+          outlook_col: "PMF Account L5 Descr"
+          int_str: false
+        - convergence_col: "Managed Segment Level 2 Description"
+          pivot_only: true
+    - fields:
+        - convergence_col: "Managed Segment Level 3 Code"
+          outlook_col: "Managed Segment L3 Id"
+          int_str: true
+        - convergence_col: "Managed Geography Level 4 Description"
+          outlook_col: "Managed Geography L4 Descr"
+          int_str: false
+        - convergence_col: "Finance PMF Level 5 Description"
+          outlook_col: "PMF Account L5 Descr"
+          int_str: false
+        - convergence_col: "Managed Segment Level 2 Description"
+          pivot_only: true
+    - fields:
+        - convergence_col: "Managed Segment Level 2 Code"
+          outlook_col: "Managed Segment L2 Id"
+          int_str: true
+        - convergence_col: "Managed Geography Level 4 Description"
+          outlook_col: "Managed Geography L4 Descr"
+          int_str: false
+        - convergence_col: "Finance PMF Level 5 Description"
+          outlook_col: "PMF Account L5 Descr"
+          int_str: false
+        - convergence_col: "Managed Segment Level 2 Description"
+          pivot_only: true
+    - fields:
+        - convergence_col: "Managed Segment Level 3 Code"
+          outlook_col: "Managed Segment L3 Id"
+          int_str: true
+        - convergence_col: "Managed Geography Level 3 Description"
+          outlook_col: "Managed Geography L3 Descr"
+          int_str: false
+        - convergence_col: "Finance PMF Level 5 Description"
+          outlook_col: "PMF Account L5 Descr"
+          int_str: false
+        - convergence_col: "Managed Segment Level 2 Description"
+          pivot_only: true
+    - fields:
+        - convergence_col: "Managed Segment Level 3 Code"
+          outlook_col: "Managed Segment L3 Id"
+          int_str: true
+        - convergence_col: "Finance PMF Level 5 Description"
+          outlook_col: "PMF Account L5 Descr"
+          int_str: false
+        - convergence_col: "Managed Segment Level 2 Description"
+          pivot_only: true
+
+paths:
+  # Absolute paths are machine-specific. Replace with your own absolute paths.
+  data_dir: "/absolute/path/to/outlook_rwa/data"
+  schema_registry_csv: "/absolute/path/to/outlook_rwa/src/outlook_rwa/schema_registry.csv"
+  data_dir_backup: "/absolute/path/to/backup/outlook-rwa-data"
+  schema_registry_csv_backup: "/absolute/path/to/backup/src/outlook_rwa/schema_registry.csv"
+
+outputs:
+  step1_dir: "/absolute/path/to/outlook_rwa/data/output/step1"
+  step1_dir_backup: "/absolute/path/to/backup/output/step1"
+  step2_dir: "/absolute/path/to/outlook_rwa/data/output/step2"
+  step2_dir_backup: "/absolute/path/to/backup/output/step2"
+  step1:
+    - cg_outlook: "cg_outlook.xlsx"
+      cbna_outlook: "cbna_outlook.xlsx"
+      cg_addon_non_waterfall_rwa: "addon_all_cg.xlsx"
+      cbna_addon_non_waterfall_rwa: "addon_all_cbna.xlsx"

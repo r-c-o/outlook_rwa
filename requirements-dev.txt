@@ -1,0 +1,19 @@
+# Development Dependencies
+# Include all production dependencies
+-r requirements.txt
+
+# Testing
+pytest==7.4.4
+pytest-cov==4.1.0
+pytest-xdist==3.5.0
+
+# Code Quality
+pylint==3.0.3
+coverage==7.4.3
+black==24.1.1
+
+# Type Checking
+mypy==1.8.0
+
+# Utilities
+pre-commit==3.6.0

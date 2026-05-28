@@ -1,3 +1,8 @@
+"""Constants and dtype mappings for Outlook RWA pipeline.
+
+Defines Polars dtype mappings for Excel/Parquet loading, column name constants,
+and enum definitions for entity types, quarters, and risk categories.
+"""
 import polars as pl
 
 # ---------------------------------------------------------------------------
@@ -196,8 +201,6 @@ MNGD_SGMT_L4_DESC = "Managed Segment Level 4 Description"
 MNGD_SGMT_L3_DESC = "Managed Segment Level 3 Description"
 MNGD_SGMT_L2_DESC = "Managed Segment Level 2 Description"
 RWA_EXPOSURE_TYPE_DESC = "RWA Exposure Type Description"
-MANAGED_SGMNT_L3_ID = "Managed Segment L3 Id"
-MANAGED_SGMNT_L2_ID = "Managed Segment L2 Id"
 
 SA_RWF = "SA RWF"
 AA_RWF = "AA RWF"
