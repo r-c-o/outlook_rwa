@@ -26,6 +26,8 @@ from .constants import (
 
 @dataclass
 class DQResult:
+    """Container for a single data-quality check result."""
+
     check_name: str
     dataset: str
     status: str   # "PASS" | "WARN" | "FAIL"
@@ -35,6 +37,7 @@ class DQResult:
 
     @property
     def pct_failing(self) -> float:
+        """Return the percentage of failing rows, or 0.0 when n_total is zero."""
         return round(self.n_failing / self.n_total * 100, 2) if self.n_total else 0.0
 
 
@@ -149,9 +152,13 @@ def _check_waterfall_keys(df: pd.DataFrame, dataset: str, n_keys: int) -> list:
             n_null = int(pd.to_numeric(df[final_col], errors="coerce").isna().sum())
             pct = n_null / n * 100
             results.append(DQResult(
-                check_name=f"waterfall_{label.lower()}_fallthrough_rate", dataset=dataset,
+                check_name=f"waterfall_{label.lower()}_fallthrough_rate",
+                dataset=dataset,
                 status=_status(n_null, n, warn_pct=0.0, fail_pct=5.0),
-                detail=f"{n_null:,}/{n:,} ({pct:.1f}%) rows fell through all {n_keys} {label} RWF keys",
+                detail=(
+                    f"{n_null:,}/{n:,} ({pct:.1f}%) rows fell through"
+                    f" all {n_keys} {label} RWF keys"
+                ),
                 n_failing=n_null, n_total=n,
             ))
 
@@ -165,9 +172,11 @@ def _check_join_match_rate(
 ) -> DQResult:
     """Among rows with a non-null left key, check what fraction have a non-null joined column."""
     if joined_col not in df.columns:
-        return DQResult(check_name=check_name, dataset=dataset, status="WARN",
-                        detail=f"Joined column '{joined_col}' not found — join may not have run",
-                        n_failing=0, n_total=0)
+        return DQResult(
+            check_name=check_name, dataset=dataset, status="WARN",
+            detail=f"Joined column '{joined_col}' not found — join may not have run",
+            n_failing=0, n_total=0,
+        )
     has_key = (
         df[left_key_col].notna()
         if left_key_col in df.columns
@@ -198,7 +207,10 @@ def _check_quarter_coverage(df: pd.DataFrame, dataset: str) -> DQResult:
     return DQResult(
         check_name="quarter_coverage", dataset=dataset,
         status="FAIL" if missing else "PASS",
-        detail=f"Quarters present: {sorted(present)}; missing: {sorted(missing) if missing else 'none'}",
+        detail=(
+            f"Quarters present: {sorted(present)}; "
+            f"missing: {sorted(missing) if missing else 'none'}"
+        ),
         n_failing=len(missing), n_total=len(expected),
     )
 
@@ -218,7 +230,28 @@ def run_all_checks(
     frm_output_cbna: pd.DataFrame,
     n_keys: int,
 ) -> pd.DataFrame:
-    """Run all DQ checks and return a DataFrame with one row per check."""
+    """Run all DQ checks and return a DataFrame with one row per check.
+
+    Executes row-count, schema, entity-flag, null-rate, waterfall match-rate,
+    join match-rate, and quarter-coverage checks against all pipeline datasets.
+
+    Args:
+        convergence: Raw convergence DataFrame from the aggregator file.
+        cg_outlook: CG long-format outlook DataFrame post-waterfall lookup.
+        cbna_outlook: CBNA long-format outlook DataFrame post-waterfall lookup.
+        cg_adjustments: CG adjustments DataFrame before format_adjustments.
+        cbna_adjustments: CBNA adjustments DataFrame before format_adjustments.
+        frm_output_cg: CG FRM output DataFrame after PUG/PMF joins and before
+            format_columns_before_pivots.
+        frm_output_cbna: CBNA FRM output DataFrame after PUG/PMF joins and before
+            format_columns_before_pivots.
+        n_keys: Number of waterfall key levels configured; controls how many
+            RWF_keyN columns are checked.
+
+    Returns:
+        DataFrame with columns check_name, dataset, status, detail, n_failing,
+        n_total, pct_failing, and run_timestamp — one row per individual check.
+    """
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     results: list[DQResult] = []
 
@@ -235,11 +268,15 @@ def run_all_checks(
         results.append(_check_row_count(df, label))
 
     # Convergence schema
-    results.append(_check_required_cols(convergence, list(convergence_polars_dtypes), "convergence"))
+    results.append(
+        _check_required_cols(convergence, list(convergence_polars_dtypes), "convergence")
+    )
 
     # Convergence entity flags: must be Y or N
     for col in (REPORTABLE_ENTITY_IS_CG, REPORTABLE_ENTITY_IS_CBNA):
-        results.append(_check_allowed_values(convergence, col, {"Y", "N"}, "convergence", "entity_flag_values"))
+        results.append(_check_allowed_values(
+            convergence, col, {"Y", "N"}, "convergence", "entity_flag_values",
+        ))
 
     # Convergence key column null rates
     for col, name in [
@@ -254,15 +291,23 @@ def run_all_checks(
     results.extend(_check_waterfall_keys(cbna_outlook, "cbna_outlook", n_keys))
 
     # Adjustment raw data: null rates on columns that feed Key1 build
-    for label, adj_df in [("cg_adjustments", cg_adjustments), ("cbna_adjustments", cbna_adjustments)]:
-        results.append(_check_null_rate(adj_df, QUARTER_ID,         label, "quarter_id_nulls"))
-        results.append(_check_null_rate(adj_df, PMF_ACCOUNT_L5_DESCR, label, "pmf_l5_nulls", fail_pct=30.0))
+    for label, adj_df in [
+        ("cg_adjustments", cg_adjustments), ("cbna_adjustments", cbna_adjustments)
+    ]:
+        results.append(_check_null_rate(adj_df, QUARTER_ID, label, "quarter_id_nulls"))
+        results.append(
+            _check_null_rate(adj_df, PMF_ACCOUNT_L5_DESCR, label, "pmf_l5_nulls", fail_pct=30.0)
+        )
 
     # PUG / PMF join match rates (checked before format_columns_before_pivots
     # fills NaN with 'None', so nulls here are genuine misses)
     for label, df in [("cg_frm_output", frm_output_cg), ("cbna_frm_output", frm_output_cbna)]:
-        results.append(_check_join_match_rate(df, MANAGED_SEGMENT_L4_DESCR, "PUG",       label, "pug_join_match_rate"))
-        results.append(_check_join_match_rate(df, PMF_ACCOUNT_L5_DESCR,     SA_ACCOUNT_NUM, label, "pmf_join_match_rate"))
+        results.append(_check_join_match_rate(
+            df, MANAGED_SEGMENT_L4_DESCR, "PUG", label, "pug_join_match_rate",
+        ))
+        results.append(_check_join_match_rate(
+            df, PMF_ACCOUNT_L5_DESCR, SA_ACCOUNT_NUM, label, "pmf_join_match_rate",
+        ))
 
     # Quarter coverage in final concatenated output
     for label, df in [("cg_frm_output", frm_output_cg), ("cbna_frm_output", frm_output_cbna)]:
@@ -284,7 +329,15 @@ def run_all_checks(
 
 
 def export_dq_results(results_df: pd.DataFrame, output_dir: Path) -> tuple[Path, Path]:
-    """Write DQ results as Parquet and Excel. Returns (parquet_path, xlsx_path)."""
+    """Write DQ results as Parquet and Excel.
+
+    Args:
+        results_df: DataFrame returned by run_all_checks.
+        output_dir: Directory where dq_results.parquet and dq_results.xlsx are written.
+
+    Returns:
+        Tuple of (parquet_path, xlsx_path) for the two output files.
+    """
     parquet_path = output_dir / "dq_results.parquet"
     xlsx_path    = output_dir / "dq_results.xlsx"
     results_df.to_parquet(parquet_path, index=False)

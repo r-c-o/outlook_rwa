@@ -165,12 +165,17 @@ mappings:
 
 The pipeline generates:
 
-- `output/schema.json` - Inferred schema
 - `output/dq_results.xlsx` - Data quality report
 - `output/dq_results.parquet` - DQ results (for further analysis)
 - `output/cg_upload_template.xlsx` - CG template
 - `output/cbna_upload_template.xlsx` - CBNA template
 - Various parquet files for intermediate results
+
+### Schema Registry
+
+The inferred schema is materialized as package data at
+`src/outlook_rwa/schema_registry.csv`. Regenerate it with
+`python scripts/create_schema_csv.py` whenever source Excel schemas change.
 
 ## Contributing
 

@@ -92,6 +92,9 @@ Handles Excel file reading and schema inference:
 - Loads data into pandas DataFrames
 - Supports bulk reading of multiple Excel sheets
 
+The inferred schema is materialized at `src/outlook_rwa/schema_registry.csv`
+(shipped as package data) and regenerated via `scripts/create_schema_csv.py`.
+
 ### \_\_init\_\_.py (Package Root)
 Exposes public API for the package; allows imports like:
 ```python

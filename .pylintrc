@@ -8,25 +8,30 @@ extension-pkg-allow-list=numpy,pandas,polars,pyarrow
 [FORMAT]
 max-line-length=99
 indent-string='    '
+max-module-lines=1500
 
 [MESSAGES CONTROL]
-# C0111: Missing module docstring
-# C0114: Missing module docstring
-# R0913: Too many arguments
-# W0212: Access to protected member
+# missing-type-doc: CODING_STANDARDS.md uses Google template with type hints in
+#   signatures, not parenthesized types in Args. Pylint's docparams plugin
+#   contradicts that convention.
+# import-error: pylint cannot resolve runtime deps unless invoked from the
+#   conda env. Use a runtime check (e.g. `python -c "import foo"`) instead.
 disable=
     missing-module-docstring,
     too-many-arguments,
     too-many-locals,
     too-many-branches,
+    too-many-positional-arguments,
+    missing-type-doc,
+    import-error,
 
 [DESIGN]
 max-attributes=7
-max-arguments=5
+max-args=5
 
 [BASIC]
 # Good variable names which should always be accepted, separated by a comma
-good-names=i,j,k,ex,Run,_,x,y,df,ax,pd,np
+good-names=i,j,k,ex,Run,_,x,y,df,ax,pd,np,Q0
 
 # Include a hint for the correct naming format with invalid-name
 include-naming-hint=yes
@@ -54,5 +59,3 @@ min-similarity-lines=5
 ignore-comments=yes
 ignore-docstrings=yes
 
-[DOCSTYLE]
-accept-empty-docstring=yes

@@ -15,8 +15,9 @@ Prerequisite: schema_registry.csv must exist (run create_schema_csv.py first).
 """
 import sys
 import warnings
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 # Allow running as a stand-alone script (python src/outlook_rwa/pipeline.py) in
 # addition to module / installed-entry-point execution. When run as a script
@@ -25,6 +26,9 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# pylint: disable=wrong-import-position
+# Imports must follow the sys.path manipulation above so the script-mode runner
+# can resolve the outlook_rwa package without an editable install.
 from outlook_rwa.functions import (
     _int_str,
     assign_quarter_id,
@@ -79,7 +83,11 @@ from outlook_rwa.constants import (
     MARKETS_L2,
     SA_RWA_AMT,
     PROJECTED_QUARTER_TO_MONTH,
+    MANAGED_GEO_L3_DESC,
+    MANAGED_GEO_L4_DESC,
     MANAGED_SEGMENT_L4_DESCR,
+    MNGD_GEO_L3_DESC,
+    MNGD_GEO_L4_DESC,
     PMF_ACCOUNT_L5_DESCR,
     SA_ACCOUNT_NUM,
     AA_ACCOUNT_NUM,
@@ -93,7 +101,7 @@ pd.set_option("display.max_columns", 500)
 # When True, also write the intermediate model-convergence frames as xlsx (the
 # parquet copies are always written). The outlook-RWA stage uses the in-memory
 # frames regardless, so this flag is purely for human inspection/debugging.
-# This flag is now configured in config.toml under [parameters].
+# This flag is now configured in config/config.yaml under `parameters`.
 
 
 def _resolve_output_dir(outputs_cfg, key):
@@ -115,12 +123,29 @@ def _resolve_output_dir(outputs_cfg, key):
     return output_dir
 
 
-def main():
+# main() is the top-level pipeline orchestrator: each statement is a sequential
+# stage (config load, schema resolution, stage 1 model convergence, stage 2 RWA
+# rollups, control-file emission). Splitting it into helpers would only push the
+# same orchestration into a thin caller without reducing the statement count
+# anywhere it would help readability.
+def main():  # pylint: disable=too-many-statements
+    """Run the combined Outlook RWA pipeline end-to-end.
+
+    Executes Stage 1 (model convergence: waterfall RWF lookup and SA/AA/ERBA RWA
+    calculation) followed by Stage 2 (outlook RWA: PUG/PMF joins, legacy breakout,
+    upload template pivots, and control file export). Reads configuration from
+    config/config.yaml (with optional config.local.yaml overrides). Output paths
+    are resolved from config['outputs'] with fallback keys for alternate locations.
+
+    Raises:
+        FileNotFoundError: If a required input file or output root directory does
+            not exist and no fallback path is configured.
+    """
     # =============================================================================
     # Setup — config, paths, schema registry
     # =============================================================================
 
-    config = load_config(Path(__file__).resolve().parents[2])
+    config = load_config(Path(__file__).resolve().parents[2] / "config")
 
     Q0 = config["parameters"]["Q0"]
     export_intermediate_xlsx = config.get("parameters", {}).get("export_intermediate_xlsx", False)
@@ -168,26 +193,31 @@ def main():
     print(f"✅ Convergence rows: {len(convergence):,}")
 
     # --- 1.2 Merge Geography Level 3 into convergence ---------------------------
-    dummy_df = cg[["Managed Geography L3 Descr", "Managed Geography L4 Descr"]].drop_duplicates()
+    dummy_df = cg[[MANAGED_GEO_L3_DESC, MANAGED_GEO_L4_DESC]].drop_duplicates()
     dummy_df = dummy_df.rename(columns={
-        "Managed Geography L3 Descr": "Managed Geography Level 3 Description",
-        "Managed Geography L4 Descr": "Managed Geography Level 4 Description",
+        MANAGED_GEO_L3_DESC: MNGD_GEO_L3_DESC,
+        MANAGED_GEO_L4_DESC: MNGD_GEO_L4_DESC,
     })
-    dummy_df = dummy_df.drop_duplicates(subset="Managed Geography Level 4 Description", keep="first")
+    dummy_df = dummy_df.drop_duplicates(subset=MNGD_GEO_L4_DESC, keep="first")
 
-    if "Managed Geography Level 3 Description" not in convergence.columns:
+    if MNGD_GEO_L3_DESC not in convergence.columns:
         convergence = convergence.merge(
-            dummy_df[["Managed Geography Level 3 Description", "Managed Geography Level 4 Description"]],
-            on="Managed Geography Level 4 Description",
+            dummy_df[[MNGD_GEO_L3_DESC, MNGD_GEO_L4_DESC]],
+            on=MNGD_GEO_L4_DESC,
             how="left",
         )
 
     # --- 1.3 Normalise PMF Account / Finance PMF column types -------------------
-    cg["PMF Account L5 Descr"] = cg["PMF Account L5 Descr"].astype(str)
-    cbna["PMF Account L5 Descr"] = cbna["PMF Account L5 Descr"].astype(str)
-    convergence["Finance PMF Level 5 Description"] = convergence["Finance PMF Level 5 Description"].astype(str)
+    cg[PMF_ACCOUNT_L5_DESCR] = cg[PMF_ACCOUNT_L5_DESCR].astype(str)
+    cbna[PMF_ACCOUNT_L5_DESCR] = cbna[PMF_ACCOUNT_L5_DESCR].astype(str)
+    convergence[FINANCE_PMF_LEVEL_5_DESC] = (
+        convergence[FINANCE_PMF_LEVEL_5_DESC].astype(str)
+    )
 
     # --- 1.4 Split convergence into credit-risk buckets -------------------------
+    # pylint: disable=duplicate-code
+    # The 6-tuple unpacking mirrors split_convergence's return signature defined in
+    # functions.py — keeping the names aligned at both ends is the readability win.
     (
         credit_risk_convergence_cg,
         credit_risk_convergence_cbna,
@@ -196,13 +226,18 @@ def main():
         cg_addon_markets_credit_risk,
         cbna_addon_markets_credit_risk,
     ) = split_convergence(convergence, PMF_ACCOUNTS, MARKETS_L2)
+    # pylint: enable=duplicate-code
 
     print(f"CG credit-risk rows:   {len(credit_risk_convergence_cg):,}")
     print(f"CBNA credit-risk rows: {len(credit_risk_convergence_cbna):,}")
 
     # --- 1.5 Build key pivot tables and compute RWFs ----------------------------
-    cg_waterfall_rwf_lookups   = create_key_pivots(credit_risk_convergence_cg,   ADV_CG_TOTAL_RWA_AMT,   key_defs)
-    cbna_waterfall_rwf_lookups = create_key_pivots(credit_risk_convergence_cbna, ADV_CBNA_TOTAL_RWA_AMT, key_defs)
+    cg_waterfall_rwf_lookups = create_key_pivots(
+        credit_risk_convergence_cg, ADV_CG_TOTAL_RWA_AMT, key_defs,
+    )
+    cbna_waterfall_rwf_lookups = create_key_pivots(
+        credit_risk_convergence_cbna, ADV_CBNA_TOTAL_RWA_AMT, key_defs,
+    )
 
     for key_df in cg_waterfall_rwf_lookups:
         compute_rwf(key_df, ADV_CG_TOTAL_RWA_AMT)
@@ -296,9 +331,13 @@ def main():
         cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
         non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
     ]:
-        q_num = pd.to_numeric(addon_df["Projected Quarter"].str[0], errors="coerce").astype("Int64")
+        q_num = pd.to_numeric(
+            addon_df["Projected Quarter"].str[0], errors="coerce",
+        ).astype("Int64")
         addon_df["YEAR"] = pd.to_numeric(
-            addon_df["Projected Quarter"].str[2:].apply(lambda x: "20" + x if pd.notna(x) else x),
+            addon_df["Projected Quarter"].str[2:].apply(
+                lambda x: "20" + x if pd.notna(x) else x
+            ),
             errors="coerce",
         ).astype("Int64")
         addon_df["Month"] = q_num.map(PROJECTED_QUARTER_TO_MONTH)
@@ -307,17 +346,22 @@ def main():
     # Markets credit-risk: fill null PMF keys, pivot, then add ERBA RWA / Comment
     # from the aggregated totals (mirrors production's §11 handling; build_addon_pivot
     # does the equivalent internally for the non-waterfall bucket).
-    cg_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC] = cg_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
-    cbna_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC] = cbna_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+    cg_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC] = (
+        cg_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+    )
+    cbna_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC] = (
+        cbna_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+    )
     cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk = build_markets_addon_pivot(
-        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, ADDON_PIVOT_INDEX
+        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, ADDON_PIVOT_INDEX,
     )
     for pivoted in (cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk):
         pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(pivoted[QRTR_ID].isin(["5", "6"]))
         pivoted["Comment"] = ""
 
     non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna = build_addon_pivot(
-        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna, ADDON_PIVOT_INDEX
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
+        ADDON_PIVOT_INDEX,
     )
 
     # Re-derive YEAR / Month (dropped by the pivot) from the surviving Quarter Id.
@@ -328,9 +372,11 @@ def main():
     )
 
     cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa = concat_addon_all(
-        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna
+        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
     )
-    
+
+
     print(f"CG addon non-waterfall rows:   {len(cg_addon_non_waterfall_rwa):,}")
     print(f"CBNA addon non-waterfall rows: {len(cbna_addon_non_waterfall_rwa):,}")
 
@@ -338,10 +384,14 @@ def main():
     intermediate_files = {
         config["outputs"]["step1"][0]["cg_outlook"]: cg_outlook,
         config["outputs"]["step1"][0]["cbna_outlook"]: cbna_outlook,
-        config["outputs"]["step1"][0]["cg_addon_non_waterfall_rwa"]: cg_addon_non_waterfall_rwa,
-        config["outputs"]["step1"][0]["cbna_addon_non_waterfall_rwa"]: cbna_addon_non_waterfall_rwa,
+        config["outputs"]["step1"][0]["cg_addon_non_waterfall_rwa"]:
+            cg_addon_non_waterfall_rwa,
+        config["outputs"]["step1"][0]["cbna_addon_non_waterfall_rwa"]:
+            cbna_addon_non_waterfall_rwa,
     }
-    intermediate_formats = ("xlsx", "parquet") if export_intermediate_xlsx else ("parquet",)
+    intermediate_formats = (
+        ("xlsx", "parquet") if export_intermediate_xlsx else ("parquet",)
+    )
     export_outputs(intermediate_files, model_convergence_dir, formats=intermediate_formats)
 
     # --- 1.13 Hand off to stage 2 in memory -------------------------------------
@@ -387,8 +437,17 @@ def main():
     disk_specs = [
         (shared["cg_adjustments"],   input_dir),
         (shared["cbna_adjustments"], input_dir),
-        (ExcelInputSpec("pug",             pug_file,         "pug", "pug_mapping.parquet"),                input_dir),
-        (ExcelInputSpec("pmf_rwa_mapping", pmf_mapping_file, "pmf", "pmf_rwa_mapping.parquet", "Sheet1"),  input_dir),
+        (
+            ExcelInputSpec("pug", pug_file, "pug", "pug_mapping.parquet"),
+            input_dir,
+        ),
+        (
+            ExcelInputSpec(
+                "pmf_rwa_mapping", pmf_mapping_file, "pmf",
+                "pmf_rwa_mapping.parquet", "Sheet1",
+            ),
+            input_dir,
+        ),
         (shared["convergence"],      model_convergence_dir),
     ]
 
@@ -501,7 +560,10 @@ def main():
         unmatched = df[df["PUG"].isna()]
         pct = len(unmatched) / (len(df) + 1) * 100
         if len(unmatched) > 0:
-            warnings.warn(f"{label}: (unmatched: {pct:.1f}%) rows ({len(unmatched):,}) have no PUG mapping match!")
+            warnings.warn(
+                f"{label}: (unmatched: {pct:.1f}%) rows "
+                f"({len(unmatched):,}) have no PUG mapping match!"
+            )
 
     # --- 2.10 Join PMF mapping --------------------------------------------------
     pre_cg   = len(frm_output_cg)
@@ -545,7 +607,11 @@ def main():
     print(f"Exported: {dq_parquet_path}")
     n_fail = (dq_results["status"] == "FAIL").sum()
     n_warn = (dq_results["status"] == "WARN").sum()
-    print(f"DQ summary: {len(dq_results)} checks — {n_fail} FAIL, {n_warn} WARN, {len(dq_results) - n_fail - n_warn} PASS")
+    n_pass = len(dq_results) - n_fail - n_warn
+    print(
+        f"DQ summary: {len(dq_results)} checks — "
+        f"{n_fail} FAIL, {n_warn} WARN, {n_pass} PASS"
+    )
 
     # --- 2.11 Format columns before pivots --------------------------------------
     frm_output_cg   = format_columns_before_pivots(frm_output_cg.copy())
@@ -580,8 +646,12 @@ def main():
     print(f"Exported: {output_cbna_raw_data_filename_path}")
 
     # --- 2.14 Build controls ----------------------------------------------------
-    cg_convergence_control   = build_convergence_control(convergence, REPORTABLE_ENTITY_IS_CG,   ADV_CG_TOTAL_RWA_AMT)
-    cbna_convergence_control = build_convergence_control(convergence, REPORTABLE_ENTITY_IS_CBNA, ADV_CBNA_TOTAL_RWA_AMT)
+    cg_convergence_control = build_convergence_control(
+        convergence, REPORTABLE_ENTITY_IS_CG, ADV_CG_TOTAL_RWA_AMT,
+    )
+    cbna_convergence_control = build_convergence_control(
+        convergence, REPORTABLE_ENTITY_IS_CBNA, ADV_CBNA_TOTAL_RWA_AMT,
+    )
 
     cg_frm_control   = build_frm_control(cg_frm_output_full)
     cbna_frm_control = build_frm_control(cbna_frm_output_full)
