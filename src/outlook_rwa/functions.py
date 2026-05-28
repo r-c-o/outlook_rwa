@@ -63,7 +63,7 @@ def assign_quarter_id(outlook_df, quarter_id_mapping):
     )
 
 
-def assign_year_month_from_quarter(*dfs, quarter_map):
+def assign_year_month_from_quarter(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, quarter_map):
     """Inverse of assign_quarter_id: derive YEAR / Month from Quarter Id.
 
     Used after the add-on pivot, where the descriptor rows survive via the pivot
@@ -72,12 +72,20 @@ def assign_year_month_from_quarter(*dfs, quarter_map):
     matching the pre-pivot behaviour for unparseable Projected Quarters.
     """
     try:
-        for df in dfs:
-            df['YEAR'] = df[QRTR_ID].map(lambda x: quarter_map[x][0])
-            df['Month'] = df[QRTR_ID].map(lambda x: quarter_map[x][1])
-            # q = pd.to_numeric(df[QRTR_ID], errors="coerce")
-            # df["YEAR"] = q.map(lambda x: quarter_map[int(x)][0] if pd.notna(x) and int(x) in quarter_map else pd.NA).astype("Int64")
-            # df["Month"] = q.map(lambda x: quarter_map[int(x)][1] if pd.notna(x) and int(x) in quarter_map else None)
+        year_map = {int(k): v[0] for k, v in quarter_map.items()}
+        month_map = {int(k): v[1] for k, v in quarter_map.items()}
+        for name, df in {
+            'cg_addon_markets_credit_risk': cg_addon_markets_credit_risk,
+            'cbna_addon_markets_credit_risk': cbna_addon_markets_credit_risk
+        }.items():
+            q = pd.to_numeric(df[QRTR_ID], errors="coerce").astype("Int64")
+
+            bad_vals = df.loc[q.isna() & df[QRTR_ID].notna(), QRTR_ID].drop_duplicates().to_list()
+            if bad_vals:
+                warnings.warn(f"{name}: Unrecognized Quarter Id values (set to NA for YEAR/Month): {bad_vals}")
+
+            df['YEAR'] = q.map(year_map).astype("Int64")
+            df['Month'] = q.map(month_map)
     except Exception as e:
         warnings.warn(f"Error assigning YEAR/Month from Quarter Id: {e}")
         raise e
@@ -137,8 +145,12 @@ def assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook):
     else NaN. Comment is set to empty string, RWA Exposure Type to 'Banking Book'.
     Modifies DataFrames in place.
     """
-    cg_outlook[ERBA_RWA] = cg_outlook[SA_RWA].where(cg_outlook[QRTR_ID].isin([5, 6]))
-    cbna_outlook[ERBA_RWA] = cbna_outlook[SA_RWA].where(cbna_outlook[QRTR_ID].isin([5, 6]))
+    cg_outlook[ERBA_RWA] = cg_outlook[SA_RWA].where(
+        cg_outlook[QRTR_ID].isin([5, 6]) | 
+        cg_outlook[QRTR_ID].isin(['5', '6']))
+    cbna_outlook[ERBA_RWA] = cbna_outlook[SA_RWA].where(
+        cbna_outlook[QRTR_ID].isin([5, 6]) | 
+        cbna_outlook[QRTR_ID].isin(['5', '6']))
     cg_outlook["Comment"] = ""
 
     cbna_outlook["Comment"] = ""
@@ -233,7 +245,9 @@ def build_addon_pivot(non_credit_risk_non_waterfall_cg, non_credit_risk_non_wate
     for pivoted in (pivoted_cg, pivoted_cbna):
         # Quarter Id is a string here (assign_quarter_id), so the quarter 5/6 test
         # uses strings rather than production's int literals.
-        pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(pivoted[QRTR_ID].isin([5, 6]))
+        pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(
+            pivoted[QRTR_ID].isin([5, 6]) | 
+            pivoted[QRTR_ID].isin(['5', '6']))
         pivoted["Comment"] = ""
     return pivoted_cg, pivoted_cbna
 

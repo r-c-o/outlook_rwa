@@ -8,6 +8,7 @@
 [parameters]
 # Starting quarter of the projection horizon — "Month YYYY" format
 Q0 = "Mar 2025"
+export_intermediate_xlsx = "False"
 
 [paths]
 # Absolute paths are machine-specific — override these in config.local.toml.

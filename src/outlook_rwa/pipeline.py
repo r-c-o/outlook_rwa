@@ -92,7 +92,7 @@ pd.set_option("display.max_columns", 500)
 # When True, also write the intermediate model-convergence frames as xlsx (the
 # parquet copies are always written). The outlook-RWA stage uses the in-memory
 # frames regardless, so this flag is purely for human inspection/debugging.
-EXPORT_INTERMEDIATE_XLSX = False
+# This flag is now configured in config.toml under [parameters].
 
 
 def _resolve_output_dir(outputs_cfg, key):
@@ -122,6 +122,7 @@ def main():
     config = load_config(Path(__file__).resolve().parents[2])
 
     Q0 = config["parameters"]["Q0"]
+    export_intermediate_xlsx = config.get("parameters", {}).get("export_intermediate_xlsx", False)
 
     schema_csv = Path(config["paths"]["schema_registry_csv"])
     if not schema_csv.exists() and "schema_registry_csv_backup" in config["paths"]:
