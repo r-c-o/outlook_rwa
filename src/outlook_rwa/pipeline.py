@@ -322,7 +322,7 @@ def main():
     # Re-derive YEAR / Month (dropped by the pivot) from the surviving Quarter Id.
     assign_year_month_from_quarter(
         cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
-        # non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
+        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
         quarter_map=quarter_map,
     )
 

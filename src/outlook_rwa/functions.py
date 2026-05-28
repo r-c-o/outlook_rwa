@@ -64,7 +64,7 @@ def assign_quarter_id(outlook_df, quarter_id_mapping):
     )
 
 
-def assign_year_month_from_quarter(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, quarter_map):
+def assign_year_month_from_quarter(cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna, quarter_map):
     """Inverse of assign_quarter_id: derive YEAR / Month from Quarter Id.
 
     Used after the add-on pivot, where the descriptor rows survive via the pivot
@@ -77,7 +77,9 @@ def assign_year_month_from_quarter(cg_addon_markets_credit_risk, cbna_addon_mark
         month_map = {int(k): v[1] for k, v in quarter_map.items()}
         for name, df in {
             'cg_addon_markets_credit_risk': cg_addon_markets_credit_risk,
-            'cbna_addon_markets_credit_risk': cbna_addon_markets_credit_risk
+            'cbna_addon_markets_credit_risk': cbna_addon_markets_credit_risk,
+            'non_credit_risk_non_waterfall_cg': non_credit_risk_non_waterfall_cg,
+            'non_credit_risk_non_waterfall_cbna': non_credit_risk_non_waterfall_cbna
         }.items():
             q = pd.to_numeric(df[QRTR_ID], errors="coerce").astype("Int64")
 
