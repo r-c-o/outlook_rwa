@@ -383,7 +383,7 @@ def main():
         config["outputs"]["step1"][0]["cg_addon_non_waterfall_rwa"]: cg_addon_non_waterfall_rwa,
         config["outputs"]["step1"][0]["cbna_addon_non_waterfall_rwa"]: cbna_addon_non_waterfall_rwa,
     }
-    intermediate_formats = ("xlsx", "parquet") if EXPORT_INTERMEDIATE_XLSX else ("parquet",)
+    intermediate_formats = ("xlsx", "parquet") if export_intermediate_xlsx else ("parquet",)
     export_outputs(intermediate_files, model_convergence_dir, formats=intermediate_formats)
 
     # --- 1.13 Hand off to stage 2 in memory -------------------------------------
