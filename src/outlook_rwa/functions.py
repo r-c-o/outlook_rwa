@@ -1,4 +1,5 @@
 import os
+import re
 import warnings
 import time
 import numpy as np
@@ -105,14 +106,8 @@ def _first_valid_rwf(df, cols):
 
 
 def calculate_sa_rwa(df):
-    rwf_columns = [
-        SA_RWF,
-        "SA RWF_key2",
-        "SA RWF_key3",
-        "SA RWF_key4",
-        "SA RWF_key5",
-    ]
-    # first present multiplier (a present 0 is used as-is; only null/empty skipped)
+    key_cols = sorted([c for c in df.columns if c.startswith("SA RWF_key")])
+    rwf_columns = [SA_RWF] + key_cols
     df["FINAL_SA_RWF"] = _first_valid_rwf(df, rwf_columns)
     df[SA_RWA] = np.where(
         df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
@@ -122,14 +117,8 @@ def calculate_sa_rwa(df):
 
 
 def calculate_aa_rwa(df):
-    rwf_columns = [
-        AA_RWF,
-        "AA RWF_key2",
-        "AA RWF_key3",
-        "AA RWF_key4",
-        "AA RWF_key5",
-    ]
-    # first present multiplier (a present 0 is used as-is; only null/empty skipped)
+    key_cols = sorted([c for c in df.columns if c.startswith("AA RWF_key")])
+    rwf_columns = [AA_RWF] + key_cols
     df["FINAL_AA_RWF"] = _first_valid_rwf(df, rwf_columns)
     df[AA_RWA] = np.where(
         df[PMF_ACCT_L5_DESC].isin(NON_CREDIT_RISK_PMF),
@@ -252,34 +241,22 @@ def build_addon_pivot(non_credit_risk_non_waterfall_cg, non_credit_risk_non_wate
     return pivoted_cg, pivoted_cbna
 
 
-def create_key_pivots(crd_df, adv_rwa_col):
-    """Create the 5 key pivot tables for a given entity's credit-risk data."""
-    key1 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L4_CDE, MNGD_GEO_L4_DESC, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    key2 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L3_CDE, MNGD_GEO_L4_DESC, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    key3 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L2_CDE, MNGD_GEO_L4_DESC, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    key4 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L3_CDE, MNGD_GEO_L3_DESC, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    key5 = crd_df.pivot_table(
-        values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
-        index=[QRTR_ID, MNGD_SGMT_L3_CDE, FINANCE_PMF_LEVEL_5_DESC, MNGD_SGMT_L2_DESC],
-        aggfunc="sum",
-    )
-    return key1, key2, key3, key4, key5
+def create_key_pivots(crd_df, adv_rwa_col, key_defs):
+    """Create pivot tables for a given entity's credit-risk data, one per key_def."""
+    pivots = []
+    for key_def in key_defs:
+        seen = set()
+        index = []
+        for col in [QRTR_ID] + [f["convergence_col"] for f in key_def["fields"]]:
+            if col not in seen:
+                seen.add(col)
+                index.append(col)
+        pivots.append(crd_df.pivot_table(
+            values=[GAAP_AMOUNT, SA_RWA_AMT, adv_rwa_col],
+            index=index,
+            aggfunc="sum",
+        ))
+    return pivots
 
 
 def compute_rwf(key_df, adv_rwa_col):
@@ -299,39 +276,21 @@ def set_markets_rwf(key_df):
     return key_df
 
 
-def build_outlook_key_strings(outlook_df):
-    """Build composite key strings for the 5-key waterfall on an outlook DataFrame.
+def build_outlook_key_strings(outlook_df, key_defs):
+    """Build composite key strings for the waterfall on an outlook DataFrame.
     Modifies the DataFrame in place.
     """
-    outlook_df["Key1"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L4_ID])
-        + outlook_df[MANAGED_GEO_L4_DESC].astype(str)
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
-    outlook_df["Key2"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L3_ID])
-        + outlook_df[MANAGED_GEO_L4_DESC].astype(str)
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
-    outlook_df["Key3"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L2_ID])
-        + outlook_df[MANAGED_GEO_L4_DESC].astype(str)
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
-    outlook_df["Key4"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L3_ID])
-        + outlook_df[MANAGED_GEO_L3_DESC].astype(str)
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
-    outlook_df["Key5"] = (
-        _int_str(outlook_df[MANAGED_SGMNT_L3_ID])
-        + outlook_df[PMF_ACCT_L5_DESC].astype(str)
-        + outlook_df[QRTR_ID].astype(str)
-    )
+    for i, key_def in enumerate(key_defs):
+        parts = []
+        for f in key_def["fields"]:
+            if f.get("pivot_only"):
+                continue
+            col = outlook_df[f["outlook_col"]]
+            parts.append(_int_str(col) if f.get("int_str") else col.astype(str))
+        parts.append(outlook_df[QRTR_ID].astype(str))
+        outlook_df[f"Key{i + 1}"] = parts[0]
+        for part in parts[1:]:
+            outlook_df[f"Key{i + 1}"] = outlook_df[f"Key{i + 1}"] + part
 
 
 def rename_month_columns(df):
@@ -458,72 +417,28 @@ def build_quarter_mappings(Q0, max_quarters):
 # Waterfall RWF Lookups (model convergence stage)
 # =============================================================================
 
-def _apply_waterfall_lookups(outlook_df, lookup1, lookup2, lookup3, lookup4, lookup5):
-    """Merge the 5 convergence pivot RWF tables onto an outlook DataFrame."""
-    # Key1: MNGD_SGMT_L4_CDE + MNGD_GEO_L4_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk1 = lookup1.reset_index()
-    lk1["_key"] = (
-        _int_str(lk1[MNGD_SGMT_L4_CDE])
-        + lk1[MNGD_GEO_L4_DESC].astype(str)
-        + lk1[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk1[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk1[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: SA_RWF, AA_RWF: AA_RWF}),
-        left_on="Key1", right_on="_key", how="left",
-    ).drop(columns=["_key"])
-
-    # Key2: MNGD_SGMT_L3_CDE + MNGD_GEO_L4_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk2 = lookup2.reset_index()
-    lk2["_key"] = (
-        _int_str(lk2[MNGD_SGMT_L3_CDE])
-        + lk2[MNGD_GEO_L4_DESC].astype(str)
-        + lk2[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk2[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk2[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key2", AA_RWF: "AA RWF_key2"}),
-        left_on="Key2", right_on="_key", how="left",
-    ).drop(columns=["_key"])
-
-    # Key3: MNGD_SGMT_L2_CDE + MNGD_GEO_L4_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk3 = lookup3.reset_index()
-    lk3["_key"] = (
-        _int_str(lk3[MNGD_SGMT_L2_CDE])
-        + lk3[MNGD_GEO_L4_DESC].astype(str)
-        + lk3[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk3[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk3[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key3", AA_RWF: "AA RWF_key3"}),
-        left_on="Key3", right_on="_key", how="left",
-    ).drop(columns=["_key"])
-
-    # Key4: MNGD_SGMT_L3_CDE + MNGD_GEO_L3_DESC + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk4 = lookup4.reset_index()
-    lk4["_key"] = (
-        _int_str(lk4[MNGD_SGMT_L3_CDE])
-        + lk4[MNGD_GEO_L3_DESC].astype(str)
-        + lk4[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk4[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk4[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key4", AA_RWF: "AA RWF_key4"}),
-        left_on="Key4", right_on="_key", how="left",
-    ).drop(columns=["_key"])
-
-    # Key5: MNGD_SGMT_L3_CDE + FINANCE_PMF_LEVEL_5_DESC + QRTR_ID
-    lk5 = lookup5.reset_index()
-    lk5["_key"] = (
-        _int_str(lk5[MNGD_SGMT_L3_CDE])
-        + lk5[FINANCE_PMF_LEVEL_5_DESC].astype(str)
-        + _int_str(lk5[QRTR_ID])
-    )
-    outlook_df = outlook_df.merge(
-        lk5[["_key", SA_RWF, AA_RWF]].rename(columns={SA_RWF: "SA RWF_key5", AA_RWF: "AA RWF_key5"}),
-        left_on="Key5", right_on="_key", how="left",
-    ).drop(columns=["_key"])
-
+def _apply_waterfall_lookups(outlook_df, lookups, key_defs):
+    """Merge the convergence pivot RWF tables onto an outlook DataFrame."""
+    for i, (lk_df, key_def) in enumerate(zip(lookups, key_defs)):
+        lk = lk_df.reset_index()
+        parts = []
+        for f in key_def["fields"]:
+            if f.get("pivot_only"):
+                continue
+            col = lk[f["convergence_col"]]
+            parts.append(_int_str(col) if f.get("int_str") else col.astype(str))
+        parts.append(_int_str(lk[QRTR_ID]))
+        lk["_key"] = parts[0]
+        for part in parts[1:]:
+            lk["_key"] = lk["_key"] + part
+        if i == 0:
+            rename_map = {SA_RWF: SA_RWF, AA_RWF: AA_RWF}
+        else:
+            rename_map = {SA_RWF: f"SA RWF_key{i + 1}", AA_RWF: f"AA RWF_key{i + 1}"}
+        outlook_df = outlook_df.merge(
+            lk[["_key", SA_RWF, AA_RWF]].rename(columns=rename_map),
+            left_on=f"Key{i + 1}", right_on="_key", how="left",
+        ).drop(columns=["_key"])
     return outlook_df
 
 
@@ -533,9 +448,8 @@ def _apply_waterfall_lookups(outlook_df, lookup1, lookup2, lookup3, lookup4, loo
 
 def format_adjustments(input_df):
     """Coerce RWF/Balances columns to numeric, then fill NaN (0 numeric, 'N/A' text)."""
-    cols_to_num = ['Balances', 'SA RWF', 'AA RWF', 'SA RWF_key2', 'AA RWF_key2',
-                   'SA RWF_key3', 'AA RWF_key3', 'SA RWF_key4', 'AA RWF_key4',
-                   'SA RWF_key5', 'AA RWF_key5']
+    key_rwf_cols = sorted([c for c in input_df.columns if re.match(r"(SA|AA) RWF_key\d+$", c)])
+    cols_to_num = ["Balances", "SA RWF", "AA RWF"] + key_rwf_cols
     for c in cols_to_num:
         if c in input_df.columns:
             input_df[c] = pd.to_numeric(input_df[c], errors='coerce')
