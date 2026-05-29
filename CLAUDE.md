@@ -73,4 +73,6 @@ python -m pytest test/test_integration.py -v  # integration (writes artifacts to
 | `CBNA_RAW_DATA.xlsx` | CBNA raw data |
 | `control_file.xlsx` | Multi-sheet control totals (CG, CBNA, Raw, Parameters) |
 
-**Note:** The current upload templates use bare integers (1–7) as quarter column headers and zero-filled `MonthN` placeholder columns. Phase 1 Track A will redesign these headers to descriptive strings (e.g., `Mar 2024`) and drop the zero-filled stubs. See `docs/REFACTOR_PLAN.md § Output File Format`.
+**Note:** The upload templates now use descriptive string quarter headers (e.g. `Jun 2025`, derived from `quarter_map`) instead of bare integers, the `RWA Actuals` bucket, and no zero-filled `MonthN` stub columns (Phase 1 Track A output-format redesign). The layout is data-driven via `transforms.build_upload_col_order` / `UPLOAD_DIMENSION_COLS` / `UPLOAD_TRAILING_COLS`. Stage 2 also emits `output/rwa_long.parquet` (tidy one-row-per Entity/Segment/PMF/RWA Calc/Period). See `docs/REFACTOR_PLAN.md § Output File Format`.
+
+**EntityBundle:** `src/outlook_rwa/models.py` defines `EntityBundle`; `pipeline.py` iterates a list of two bundles (CG, CBNA) instead of paired `cg_*`/`cbna_*` variables. Adding a third entity = appending one bundle.
