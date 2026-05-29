@@ -57,6 +57,13 @@ from .constants import (
     UPLOAD_TEMPLATE_COL_ORDER,
     UPLOAD_TEMPLATE_MONTH_STUBS,
 )
+from .transforms import (
+    BALANCE_SHEET_MONTH_COLS,
+    DEFAULT_AA_ACCOUNT,
+    DEFAULT_SA_ACCOUNT,
+    MONTH_COL_ORDER,
+    UPLOAD_STUB_DEFAULTS,
+)
 
 
 # =============================================================================
@@ -495,10 +502,8 @@ def rename_month_columns(df):
         df: Balance sheet DataFrame containing M3_USDOLLAR, M6_USDOLLAR,
             M9_USDOLLAR, and M12_USDOLLAR columns.
     """
-    df["Mar"] = df["M3_USDOLLAR"]
-    df["Jun"] = df["M6_USDOLLAR"]
-    df["Sep"] = df["M9_USDOLLAR"]
-    df["Dec"] = df["M12_USDOLLAR"]
+    for src, label in BALANCE_SHEET_MONTH_COLS.items():
+        df[label] = df[src]
 
 
 def create_quarterly_pivot(df):
@@ -526,7 +531,7 @@ def create_quarterly_pivot(df):
     ]
     return df.pivot_table(
         index=pivot_index,
-        values=["Mar", "Jun", "Sep", "Dec"],
+        values=MONTH_COL_ORDER,
         aggfunc="sum",
     ).reset_index()
 
@@ -557,7 +562,7 @@ def melt_quarterly_pivot(pivot_df):
     return pd.melt(
         pivot_df,
         id_vars=melt_id_vars,
-        value_vars=["Mar", "Jun", "Sep", "Dec"],
+        value_vars=MONTH_COL_ORDER,
         var_name="Month",
         value_name="Balances",
     )
@@ -916,22 +921,9 @@ def format_upload_template(input_df):
     numeric_cols = input_df.select_dtypes(include=['number']).columns
     input_df[numeric_cols] = input_df[numeric_cols].fillna(0)
 
-    # Fixed upload stub columns
-    input_df["FileType"]        = "R"
-    input_df["ManagedGeo"]      = ""
-    input_df["FrsBu"]           = ""
-    input_df["CustomerSegment"] = ""
-    input_df["Product"]         = ""
-    input_df["Affiliate"]       = "00000"
-    input_df["Project"]         = ""
-    input_df["TransactionId"]   = ""
-    input_df["BalanceType"]     = "EOP"
-    input_df["Currency"]        = "USD"
-    input_df["Layer"]           = ""
-    input_df["ModelId"]         = ""
-    input_df["MDRM"]            = ""
-    input_df["ReasonCode"]      = ""
-    input_df["Comments"]        = ""
+    # Fixed upload stub columns (values defined centrally in transforms.py)
+    for col, val in UPLOAD_STUB_DEFAULTS.items():
+        input_df[col] = val
 
     # Account: AA -> AA account #, SA -> SA account #, otherwise N/A
     input_df["Account"] = np.where(
@@ -942,11 +934,11 @@ def format_upload_template(input_df):
     # Default account numbers where the PMF mapping was missing ('None')
     input_df["Account"] = np.where(
         (input_df[RWA_CALC] == "AA") & (input_df["Account"] == "None"),
-        "664062", input_df["Account"],
+        DEFAULT_AA_ACCOUNT, input_df["Account"],
     )
     input_df["Account"] = np.where(
         (input_df[RWA_CALC] == "SA") & (input_df["Account"] == "None"),
-        "663722", input_df["Account"],
+        DEFAULT_SA_ACCOUNT, input_df["Account"],
     )
 
     # Month placeholder columns (quarter-end values live in the integer columns)
