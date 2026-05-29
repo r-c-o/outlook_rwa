@@ -1,0 +1,46 @@
+-- GENERATED FILE — do not edit by hand.
+-- Rendered from sql/templates/waterfall_rwf.sql.j2 by scripts/generate_sql.py.
+-- Business-rule values are injected from transforms.py / constants.py via SQLGlot.
+-- Re-run: python scripts/generate_sql.py  (or scripts/update.sh)
+
+-- waterfall_rwf: Key1 RWF lookup table per entity.
+-- Reproduces functions.create_key_pivots(key_def[0]) -> compute_rwf -> set_markets_rwf:
+--   1. GROUP BY the Key1 index (quarter_id, seg_l4_code, geo_l4_desc, pmf_l5, seg_l2_desc),
+--      summing GAAP / SA RWA / Adv RWA.
+--   2. SA RWF = SUM(sa_rwa)/SUM(gaap); if abs(value) > 12.5 then 1.
+--      AA RWF = SUM(adv_rwa)/SUM(gaap); same cap rule.
+--   3. Null out SA/AA RWF for Markets rows (they get add-on treatment instead).
+--
+-- 12.5 is injected from the compute_rwf abs-cap (12.5).
+-- The Markets predicate (token markets_eq_alias) comes from constants.MARKETS_L2.
+CREATE OR REPLACE TABLE waterfall_rwf AS
+WITH grouped AS (
+    SELECT
+        entity,
+        quarter_id,
+        seg_l4_code,
+        geo_l4_desc,
+        pmf_l5,
+        seg_l2_desc,
+        SUM(gaap_amt)    AS gaap_amt,
+        SUM(sa_rwa_amt)  AS sa_rwa_amt,
+        SUM(adv_rwa_amt) AS adv_rwa_amt
+    FROM conv_credit_risk
+    GROUP BY entity, quarter_id, seg_l4_code, geo_l4_desc, pmf_l5, seg_l2_desc
+),
+rwf AS (
+    SELECT
+        entity, quarter_id, seg_l4_code, geo_l4_desc, pmf_l5, seg_l2_desc,
+        gaap_amt, sa_rwa_amt, adv_rwa_amt,
+        CASE WHEN ABS(sa_rwa_amt / gaap_amt) > 12.5
+             THEN 1 ELSE sa_rwa_amt / gaap_amt END AS sa_rwf_raw,
+        CASE WHEN ABS(adv_rwa_amt / gaap_amt) > 12.5
+             THEN 1 ELSE adv_rwa_amt / gaap_amt END AS aa_rwf_raw
+    FROM grouped
+)
+SELECT
+    entity, quarter_id, seg_l4_code, geo_l4_desc, pmf_l5, seg_l2_desc,
+    gaap_amt, sa_rwa_amt, adv_rwa_amt,
+    CASE WHEN seg_l2_desc = 'Markets [L2]' THEN NULL ELSE sa_rwf_raw END AS sa_rwf,
+    CASE WHEN seg_l2_desc = 'Markets [L2]' THEN NULL ELSE aa_rwf_raw END AS aa_rwf
+FROM rwf;

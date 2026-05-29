@@ -1,0 +1,21 @@
+-- outlook_with_rwf: LEFT JOIN the Key1 RWF table onto the keyed outlook rows.
+-- Maps to functions._apply_waterfall_lookups for Key1. The join is on the Key1
+-- components (seg_l4_code = seg_l4_id, geo_l4_desc, pmf_l5, quarter_id), which is
+-- equivalent to matching the concatenated Key1 strings but avoids string fragility.
+--
+-- COALESCE across the per-key RWF columns is the waterfall priority
+-- (functions._first_valid_rwf). Only Key1 is materialized here; additional keys
+-- would extend the COALESCE list. With a single key the COALESCE is a no-op but
+-- documents the waterfall contract.
+CREATE OR REPLACE TABLE outlook_with_rwf AS
+SELECT
+    o.*,
+    COALESCE(w.sa_rwf) AS final_sa_rwf,
+    COALESCE(w.aa_rwf) AS final_aa_rwf
+FROM outlook_with_keys o
+LEFT JOIN waterfall_rwf w
+       ON o.entity = w.entity
+      AND CAST(o.seg_l4_id AS BIGINT) = CAST(w.seg_l4_code AS BIGINT)
+      AND o.geo_l4_desc = w.geo_l4_desc
+      AND o.pmf_l5 = w.pmf_l5
+      AND o.quarter_id = w.quarter_id;
