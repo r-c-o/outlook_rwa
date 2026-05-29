@@ -398,6 +398,7 @@ def test_pipeline_end_to_end_writes_step2_artifacts(
         "CG_RAW_DATA.xlsx",
         "CBNA_RAW_DATA.xlsx",
         "control_file.xlsx",
+        "rwa_long.parquet",
     ):
         target = step2 / name
         assert target.exists(), f"Expected {target} to be written by main()"
@@ -414,3 +415,40 @@ def test_pipeline_end_to_end_writes_step2_artifacts(
         assert (step1 / name).exists(), (
             f"Expected stage-1 parquet {name} to be written"
         )
+
+    # --- Output-format redesign (Phase 1 Track A) -----------------------------
+    # The fixture uses Q0="Mar 2025" with 4 quarters, so quarter id 0 -> the
+    # "RWA Actuals" bucket and ids 1..3 -> "Jun 2025", "Sep 2025", "Dec 2025".
+    quarter_headers = ["Jun 2025", "Sep 2025", "Dec 2025"]
+    expected_upload_cols = [
+        "Reporting Layer", "Managed Segment L2 Descr", "Managed Segment L3 Descr",
+        "RWA Calc", "PMF Account L5 Descr", "FileType", "Managed Segment L4 Descr",
+        "ManagedGeo", "PUG", "FrsBu", "CustomerSegment", "Product", "Entity",
+        "Affiliate", "Project", "TransactionId", "Account", "BalanceType",
+        "Currency", "Layer", "ModelId", "MDRM", "ReasonCode", "Comments",
+        "RWA Actuals", *quarter_headers,
+        "Comment", "RWA Exposure Type", "Markets Filter",
+    ]
+    for name in ("CG_Upload_Template_Full.xlsx", "CBNA_Upload_Template_Full.xlsx"):
+        upload = pd.read_excel(step2 / name)
+        assert list(upload.columns) == expected_upload_cols, (
+            f"{name} column layout changed: {list(upload.columns)}"
+        )
+        # Every header cell is a string — no bare integers in the header row.
+        assert all(isinstance(c, str) for c in upload.columns), (
+            f"{name} has non-string headers: {upload.columns.tolist()}"
+        )
+        # No zero-filled MonthN stub columns remain.
+        assert not any(str(c).startswith("Month") for c in upload.columns), (
+            f"{name} still has MonthN stub columns"
+        )
+
+    # Tidy long-format export: one row per dimension/RWA-calc/period combination.
+    rwa_long = pd.read_parquet(step2 / "rwa_long.parquet")
+    assert set(rwa_long.columns) >= {
+        "Entity", "Reporting Layer", "Managed Segment L2 Descr",
+        "Managed Segment L3 Descr", "Managed Segment L4 Descr",
+        "PMF Account L5 Descr", "RWA Calc", "Period", "RWA Amount",
+    }
+    assert len(rwa_long) > 0
+    assert set(rwa_long["RWA Calc"].unique()) <= {"SA", "AA", "ERBA"}

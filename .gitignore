@@ -8,7 +8,6 @@ chat_session2.json
 
 # Local-only files: kept on disk but not tracked
 .claude/
-CLAUDE.md
 REVIEW.md
 __do_git.py
 __git_log.txt
