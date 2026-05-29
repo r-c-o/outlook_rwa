@@ -35,7 +35,7 @@ from outlook_rwa.functions import (
     assign_year_month_from_quarter,
     calculate_sa_rwa,
     calculate_aa_rwa,
-    assign_erba_rwa_and_metadata,
+    assign_erba_rwa,
     split_convergence,
     build_markets_addon_pivot,
     build_addon_pivot,
@@ -60,7 +60,12 @@ from outlook_rwa.functions import (
     build_convergence_control,
     build_frm_control,
     build_raw_data_control,
-    concat_addon_all
+    concat_addon,
+)
+from outlook_rwa.models import EntityBundle
+from outlook_rwa.transforms import (
+    UPLOAD_ACTUALS_LABEL,
+    quarter_label,
 )
 from outlook_rwa.dq import run_all_checks, export_dq_results
 from outlook_rwa.parallel_excel_to_parquet import (
@@ -85,7 +90,10 @@ from outlook_rwa.constants import (
     PROJECTED_QUARTER_TO_MONTH,
     MANAGED_GEO_L3_DESC,
     MANAGED_GEO_L4_DESC,
+    MANAGED_SEGMENT_L2_DESCR,
+    MANAGED_SEGMENT_L3_DESCR,
     MANAGED_SEGMENT_L4_DESCR,
+    REPORTING_LAYER,
     MNGD_GEO_L3_DESC,
     MNGD_GEO_L4_DESC,
     PMF_ACCOUNT_L5_DESCR,
@@ -121,6 +129,48 @@ def _resolve_output_dir(outputs_cfg, key):
         )
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+def _build_rwa_long(entities, quarter_labels):
+    """Build a tidy long-format RWA table across all entities.
+
+    One row per (Entity, Reporting Layer, Segment L2/L3/L4, PMF L5, RWA Calc,
+    Period, RWA Amount). Period is the descriptive quarter label; the actuals
+    bucket (quarter id 0) becomes "RWA Actuals".
+
+    Args:
+        entities: List of EntityBundle with populated frm_output frames.
+        quarter_labels: Dict mapping integer quarter id -> descriptive label.
+
+    Returns:
+        Long-format DataFrame suitable for Tableau / SQL consumption.
+    """
+    dim_cols = [
+        "Entity",
+        REPORTING_LAYER,
+        MANAGED_SEGMENT_L2_DESCR,
+        MANAGED_SEGMENT_L3_DESCR,
+        MANAGED_SEGMENT_L4_DESCR,
+        PMF_ACCOUNT_L5_DESCR,
+    ]
+    rwa_cols = {"SA RWA": "SA", "AA RWA": "AA", "ERBA RWA": "ERBA"}
+    frames = []
+    for entity in entities:
+        df = entity.frm_output.copy()
+        df["Entity"] = entity.raw_entity_code
+        qid = pd.to_numeric(df[QUARTER_ID], errors="coerce").astype("Int64")
+        df["Period"] = qid.map(quarter_labels)
+        present = [c for c in dim_cols if c in df.columns]
+        value_cols = [c for c in rwa_cols if c in df.columns]
+        tidy = df.melt(
+            id_vars=present + ["Period"],
+            value_vars=value_cols,
+            var_name="RWA Calc",
+            value_name="RWA Amount",
+        )
+        tidy["RWA Calc"] = tidy["RWA Calc"].map(rwa_cols)
+        frames.append(tidy)
+    return pd.concat(frames, ignore_index=True)
 
 
 # main() is the top-level pipeline orchestrator: each statement is a sequential
@@ -182,18 +232,38 @@ def main():  # pylint: disable=too-many-statements
         load_specs_with_schema_cast(step1_specs, model_convergence_dir, schema_csv)
     )
 
-    cg = src_cg.copy(deep=True)
-    cbna = src_cbna.copy(deep=True)
     convergence = src_convergence.copy(deep=True)
-    cg_adjustments = src_cg_adjustments.copy(deep=True)
-    cbna_adjustments = src_cbna_adjustments.copy(deep=True)
 
-    print(f"✅ CG rows:          {len(cg):,}")
-    print(f"✅ CBNA rows:        {len(cbna):,}")
+    # One EntityBundle per reportable entity. The pipeline iterates this list
+    # instead of carrying ~20 paired cg_*/cbna_* variables. raw_entity_code is
+    # the value written to the stage-2 "Entity" column ("BA"=CG, "BB"=CBNA).
+    entities = [
+        EntityBundle(
+            name="CG",
+            adv_rwa_col=ADV_CG_TOTAL_RWA_AMT,
+            entity_filter_col=REPORTABLE_ENTITY_IS_CG,
+            raw_entity_code="BA",
+            balance_sheet=src_cg.copy(deep=True),
+            adjustments=src_cg_adjustments.copy(deep=True),
+        ),
+        EntityBundle(
+            name="CBNA",
+            adv_rwa_col=ADV_CBNA_TOTAL_RWA_AMT,
+            entity_filter_col=REPORTABLE_ENTITY_IS_CBNA,
+            raw_entity_code="BB",
+            balance_sheet=src_cbna.copy(deep=True),
+            adjustments=src_cbna_adjustments.copy(deep=True),
+        ),
+    ]
+
     print(f"✅ Convergence rows: {len(convergence):,}")
+    for entity in entities:
+        print(f"✅ {entity.name} rows:          {len(entity.balance_sheet):,}")
 
     # --- 1.2 Merge Geography Level 3 into convergence ---------------------------
-    dummy_df = cg[[MANAGED_GEO_L3_DESC, MANAGED_GEO_L4_DESC]].drop_duplicates()
+    # The geo L3->L4 lookup is entity-agnostic; CG's balance sheet supplies it.
+    cg_balance_sheet = entities[0].balance_sheet
+    dummy_df = cg_balance_sheet[[MANAGED_GEO_L3_DESC, MANAGED_GEO_L4_DESC]].drop_duplicates()
     dummy_df = dummy_df.rename(columns={
         MANAGED_GEO_L3_DESC: MNGD_GEO_L3_DESC,
         MANAGED_GEO_L4_DESC: MNGD_GEO_L4_DESC,
@@ -208,71 +278,63 @@ def main():  # pylint: disable=too-many-statements
         )
 
     # --- 1.3 Normalise PMF Account / Finance PMF column types -------------------
-    cg[PMF_ACCOUNT_L5_DESCR] = cg[PMF_ACCOUNT_L5_DESCR].astype(str)
-    cbna[PMF_ACCOUNT_L5_DESCR] = cbna[PMF_ACCOUNT_L5_DESCR].astype(str)
+    for entity in entities:
+        entity.balance_sheet[PMF_ACCOUNT_L5_DESCR] = (
+            entity.balance_sheet[PMF_ACCOUNT_L5_DESCR].astype(str)
+        )
     convergence[FINANCE_PMF_LEVEL_5_DESC] = (
         convergence[FINANCE_PMF_LEVEL_5_DESC].astype(str)
     )
 
     # --- 1.4 Split convergence into credit-risk buckets -------------------------
-    # pylint: disable=duplicate-code
-    # The 6-tuple unpacking mirrors split_convergence's return signature defined in
-    # functions.py — keeping the names aligned at both ends is the readability win.
+    # split_convergence stays entity-agnostic: it returns the CG and CBNA slices
+    # interleaved, which we distribute onto the entity bundles in list order.
     (
-        credit_risk_convergence_cg,
-        credit_risk_convergence_cbna,
-        non_credit_risk_non_waterfall_cg,
-        non_credit_risk_non_waterfall_cbna,
-        cg_addon_markets_credit_risk,
-        cbna_addon_markets_credit_risk,
+        credit_risk_cg, credit_risk_cbna,
+        non_waterfall_cg, non_waterfall_cbna,
+        markets_cg, markets_cbna,
     ) = split_convergence(convergence, PMF_ACCOUNTS, MARKETS_L2)
-    # pylint: enable=duplicate-code
+    entities[0].credit_risk = credit_risk_cg
+    entities[1].credit_risk = credit_risk_cbna
+    entities[0].addon_non_waterfall = non_waterfall_cg
+    entities[1].addon_non_waterfall = non_waterfall_cbna
+    entities[0].addon_markets = markets_cg
+    entities[1].addon_markets = markets_cbna
 
-    print(f"CG credit-risk rows:   {len(credit_risk_convergence_cg):,}")
-    print(f"CBNA credit-risk rows: {len(credit_risk_convergence_cbna):,}")
+    for entity in entities:
+        print(f"{entity.name} credit-risk rows:   {len(entity.credit_risk):,}")
 
     # --- 1.5 Build key pivot tables and compute RWFs ----------------------------
-    cg_waterfall_rwf_lookups = create_key_pivots(
-        credit_risk_convergence_cg, ADV_CG_TOTAL_RWA_AMT, key_defs,
-    )
-    cbna_waterfall_rwf_lookups = create_key_pivots(
-        credit_risk_convergence_cbna, ADV_CBNA_TOTAL_RWA_AMT, key_defs,
-    )
-
-    for key_df in cg_waterfall_rwf_lookups:
-        compute_rwf(key_df, ADV_CG_TOTAL_RWA_AMT)
-        set_markets_rwf(key_df)
-
-    for key_df in cbna_waterfall_rwf_lookups:
-        compute_rwf(key_df, ADV_CBNA_TOTAL_RWA_AMT)
-        set_markets_rwf(key_df)
+    for entity in entities:
+        entity.waterfall_lookups = create_key_pivots(
+            entity.credit_risk, entity.adv_rwa_col, key_defs,
+        )
+        for key_df in entity.waterfall_lookups:
+            compute_rwf(key_df, entity.adv_rwa_col)
+            set_markets_rwf(key_df)
 
     # --- 1.6 Reshape balance sheet: pivot then melt to long ---------------------
-    rename_month_columns(cg)
-    rename_month_columns(cbna)
-
-    cg_pivot = create_quarterly_pivot(cg)
-    cbna_pivot = create_quarterly_pivot(cbna)
-
-    cg_outlook = melt_quarterly_pivot(cg_pivot)
-    cbna_outlook = melt_quarterly_pivot(cbna_pivot)
-
-    print(f"CG outlook long rows:   {len(cg_outlook):,}")
-    print(f"CBNA outlook long rows: {len(cbna_outlook):,}")
+    for entity in entities:
+        rename_month_columns(entity.balance_sheet)
+        pivot = create_quarterly_pivot(entity.balance_sheet)
+        entity.outlook = melt_quarterly_pivot(pivot)
+        print(f"{entity.name} outlook long rows:   {len(entity.outlook):,}")
 
     # --- 1.7 Quarter mapping + quarter IDs --------------------------------------
-    max_quarters = check_and_get_max_quarters(convergence, cg_outlook, cbna_outlook)
+    max_quarters = check_and_get_max_quarters(
+        convergence, entities[0].outlook, entities[1].outlook,
+    )
     quarter_map, quarter_id_mapping = build_quarter_mappings(Q0, max_quarters)
 
-    assign_quarter_id(cg_outlook, quarter_id_mapping)
-    assign_quarter_id(cbna_outlook, quarter_id_mapping)
+    for entity in entities:
+        assign_quarter_id(entity.outlook, quarter_id_mapping)
 
     # --- 1.8 Build waterfall key strings and apply RWF lookups ------------------
-    build_outlook_key_strings(cg_outlook, key_defs)
-    build_outlook_key_strings(cbna_outlook, key_defs)
-
-    cg_outlook   = _apply_waterfall_lookups(cg_outlook,   cg_waterfall_rwf_lookups,   key_defs)
-    cbna_outlook = _apply_waterfall_lookups(cbna_outlook, cbna_waterfall_rwf_lookups, key_defs)
+    for entity in entities:
+        build_outlook_key_strings(entity.outlook, key_defs)
+        entity.outlook = _apply_waterfall_lookups(
+            entity.outlook, entity.waterfall_lookups, key_defs,
+        )
 
     # --- 1.9 Apply adjustments --------------------------------------------------
     key_cols = [f"Key{i + 1}" for i in range(n_keys)]
@@ -283,7 +345,8 @@ def main():  # pylint: disable=too-many-statements
     all_adj_cols = list(dict.fromkeys(base_adj_cols + key_cols[1:] + rwf_cols))
 
     key1_def = key_defs[0]
-    for adj_df in (cg_adjustments, cbna_adjustments):
+    for entity in entities:
+        adj_df = entity.adjustments
         parts = []
         for f in key1_def["fields"]:
             if f.get("pivot_only"):
@@ -295,99 +358,81 @@ def main():  # pylint: disable=too-many-statements
         for part in parts[1:]:
             adj_df["Key1"] = adj_df["Key1"] + part
 
-    cg_adj_cols  = [c for c in all_adj_cols if c in cg_adjustments.columns]
-    cbna_adj_cols = [c for c in all_adj_cols if c in cbna_adjustments.columns]
-
-    cg_outlook = pd.merge(
-        cg_outlook,
-        cg_adjustments[cg_adj_cols],
-        on="Key1",
-        how="left",
-        suffixes=("", "_adj"),
-    )
-
-    cbna_outlook = pd.merge(
-        cbna_outlook,
-        cbna_adjustments[cbna_adj_cols],
-        on="Key1",
-        how="left",
-        suffixes=("", "_adj"),
-    )
+        adj_cols = [c for c in all_adj_cols if c in adj_df.columns]
+        entity.outlook = pd.merge(
+            entity.outlook,
+            adj_df[adj_cols],
+            on="Key1",
+            how="left",
+            suffixes=("", "_adj"),
+        )
 
     # --- 1.10 Calculate RWA -----------------------------------------------------
-    calculate_sa_rwa(cg_outlook)
-    calculate_aa_rwa(cg_outlook)
-    calculate_sa_rwa(cbna_outlook)
-    calculate_aa_rwa(cbna_outlook)
-
-    assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook)
+    for entity in entities:
+        calculate_sa_rwa(entity.outlook)
+        calculate_aa_rwa(entity.outlook)
+        assign_erba_rwa(entity.outlook)
 
     # --- 1.11 Addon: markets / non-waterfall ------------------------------------
     # Quarter Id is a pivot key, so derive it (via YEAR / Month) on the raw rows
     # first; both add-on buckets are then aggregated to the addon-pivot grain so
     # the export carries one summarized row per index group instead of one row
     # per raw convergence record.
-    for addon_df in [
-        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
-        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
-    ]:
-        q_num = pd.to_numeric(
-            addon_df["Projected Quarter"].str[0], errors="coerce",
-        ).astype("Int64")
-        addon_df["YEAR"] = pd.to_numeric(
-            addon_df["Projected Quarter"].str[2:].apply(
-                lambda x: "20" + x if pd.notna(x) else x
-            ),
-            errors="coerce",
-        ).astype("Int64")
-        addon_df["Month"] = q_num.map(PROJECTED_QUARTER_TO_MONTH)
-        assign_quarter_id(addon_df, quarter_id_mapping)
+    for entity in entities:
+        for addon_df in (entity.addon_markets, entity.addon_non_waterfall):
+            q_num = pd.to_numeric(
+                addon_df["Projected Quarter"].str[0], errors="coerce",
+            ).astype("Int64")
+            addon_df["YEAR"] = pd.to_numeric(
+                addon_df["Projected Quarter"].str[2:].apply(
+                    lambda x: "20" + x if pd.notna(x) else x
+                ),
+                errors="coerce",
+            ).astype("Int64")
+            addon_df["Month"] = q_num.map(PROJECTED_QUARTER_TO_MONTH)
+            assign_quarter_id(addon_df, quarter_id_mapping)
 
-    # Markets credit-risk: fill null PMF keys, pivot, then add ERBA RWA / Comment
-    # from the aggregated totals (mirrors production's §11 handling; build_addon_pivot
-    # does the equivalent internally for the non-waterfall bucket).
-    cg_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC] = (
-        cg_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
-    )
-    cbna_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC] = (
-        cbna_addon_markets_credit_risk[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
-    )
-    cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk = build_markets_addon_pivot(
-        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk, ADDON_PIVOT_INDEX,
-    )
-    for pivoted in (cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk):
-        pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(pivoted[QRTR_ID].isin(["5", "6"]))
-        pivoted["Comment"] = ""
+        # Markets credit-risk: fill null PMF keys, pivot, then add ERBA RWA /
+        # Comment from the aggregated totals (mirrors production's §11 handling;
+        # build_addon_pivot does the equivalent internally for the non-waterfall
+        # bucket).
+        entity.addon_markets[FINANCE_PMF_LEVEL_5_DESC] = (
+            entity.addon_markets[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+        )
+        entity.addon_markets = build_markets_addon_pivot(
+            entity.addon_markets, entity.adv_rwa_col, ADDON_PIVOT_INDEX,
+        )
+        entity.addon_markets[ERBA_RWA] = entity.addon_markets[SA_RWA_AMT].where(
+            entity.addon_markets[QRTR_ID].isin(["5", "6"]))
+        entity.addon_markets["Comment"] = ""
 
-    non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna = build_addon_pivot(
-        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
-        ADDON_PIVOT_INDEX,
-    )
+        entity.addon_non_waterfall = build_addon_pivot(
+            entity.addon_non_waterfall, entity.adv_rwa_col, ADDON_PIVOT_INDEX,
+        )
 
-    # Re-derive YEAR / Month (dropped by the pivot) from the surviving Quarter Id.
-    assign_year_month_from_quarter(
-        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
-        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
-        quarter_map=quarter_map,
-    )
+        # Re-derive YEAR / Month (dropped by the pivot) from the surviving
+        # Quarter Id.
+        assign_year_month_from_quarter(
+            {
+                f"{entity.name}_addon_markets_credit_risk": entity.addon_markets,
+                f"non_credit_risk_non_waterfall_{entity.name}": entity.addon_non_waterfall,
+            },
+            quarter_map=quarter_map,
+        )
 
-    cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa = concat_addon_all(
-        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
-        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
-    )
+        entity.addon_all = concat_addon(entity.addon_markets, entity.addon_non_waterfall)
 
 
-    print(f"CG addon non-waterfall rows:   {len(cg_addon_non_waterfall_rwa):,}")
-    print(f"CBNA addon non-waterfall rows: {len(cbna_addon_non_waterfall_rwa):,}")
+    for entity in entities:
+        print(f"{entity.name} addon non-waterfall rows:   {len(entity.addon_all):,}")
 
     # --- 1.12 Export intermediate artifacts (parquet always; xlsx if debug) -----
+    cg, cbna = entities
     intermediate_files = {
-        config["outputs"]["step1"][0]["cg_outlook"]: cg_outlook,
-        config["outputs"]["step1"][0]["cbna_outlook"]: cbna_outlook,
-        config["outputs"]["step1"][0]["cg_addon_non_waterfall_rwa"]:
-            cg_addon_non_waterfall_rwa,
-        config["outputs"]["step1"][0]["cbna_addon_non_waterfall_rwa"]:
-            cbna_addon_non_waterfall_rwa,
+        config["outputs"]["step1"][0]["cg_outlook"]: cg.outlook,
+        config["outputs"]["step1"][0]["cbna_outlook"]: cbna.outlook,
+        config["outputs"]["step1"][0]["cg_addon_non_waterfall_rwa"]: cg.addon_all,
+        config["outputs"]["step1"][0]["cbna_addon_non_waterfall_rwa"]: cbna.addon_all,
     }
     intermediate_formats = (
         ("xlsx", "parquet") if export_intermediate_xlsx else ("parquet",)
@@ -397,10 +442,8 @@ def main():  # pylint: disable=too-many-statements
     # --- 1.13 Hand off to stage 2 in memory -------------------------------------
     # Reproduce the null semantics the old parquet round-trip applied (empty string
     # -> NaN), so the in-memory handoff is identical to re-reading from disk.
-    src_cg_outlook = normalize_nulls(cg_outlook)
-    src_cbna_outlook = normalize_nulls(cbna_outlook)
-    src_addon_all_cg = normalize_nulls(cg_addon_non_waterfall_rwa)
-    src_addon_all_cbna = normalize_nulls(cbna_addon_non_waterfall_rwa)
+    src_outlook = {e.name: normalize_nulls(e.outlook) for e in entities}
+    src_addon_all = {e.name: normalize_nulls(e.addon_all) for e in entities}
 
     # =============================================================================
     # STAGE 2 — Outlook RWA
@@ -466,28 +509,28 @@ def main():  # pylint: disable=too-many-statements
         src_convergence,
     ) = [load_spec_with_fallback(spec, parquet_dir, registry) for spec, parquet_dir in disk_specs]
 
-    cg_adjustments   = src_cg_adjustments.copy(deep=True)
-    cbna_adjustments = src_cbna_adjustments.copy(deep=True)
     pug_df           = src_pug.copy(deep=True)
     rwa_pmf_mapping  = src_rwa_pmf_mapping.copy(deep=True)
     convergence      = src_convergence.copy(deep=True)
-    cg_outlook       = src_cg_outlook.copy(deep=True)
-    cbna_outlook     = src_cbna_outlook.copy(deep=True)
-    addon_all_cg     = src_addon_all_cg.copy(deep=True)
-    addon_all_cbna   = src_addon_all_cbna.copy(deep=True)
 
-    print(f"CG Adjustments rows:   {len(cg_adjustments):,}")
-    print(f"CBNA Adjustments rows: {len(cbna_adjustments):,}")
+    # Re-seat the stage-2 inputs onto the entity bundles: disk-loaded adjustments
+    # plus the in-memory outlook / addon frames handed off from stage 1.
+    stage2_adjustments = {
+        "CG": src_cg_adjustments.copy(deep=True),
+        "CBNA": src_cbna_adjustments.copy(deep=True),
+    }
+    for entity in entities:
+        entity.adjustments = stage2_adjustments[entity.name]
+        entity.outlook = src_outlook[entity.name].copy(deep=True)
+        entity.addon_all = src_addon_all[entity.name].copy(deep=True)
+        print(f"{entity.name} Adjustments rows:   {len(entity.adjustments):,}")
     print(f"Convergence rows:      {len(convergence):,}")
     print(f"PUG Mapping rows:      {len(pug_df):,}")
 
-    # --- 2.2 Format adjustments -------------------------------------------------
-    cg_adjustments_formatted  = format_adjustments(cg_adjustments.copy())
-    cbna_adjustments_formatted = format_adjustments(cbna_adjustments.copy())
-
-    # --- 2.3 Rename addon columns to outlook schema -----------------------------
-    addon_all_cg   = rename_addon_columns(addon_all_cg, 'CG')
-    addon_all_cbna = rename_addon_columns(addon_all_cbna, 'CBNA')
+    # --- 2.2 Format adjustments / 2.3 Rename addon columns to outlook schema -----
+    for entity in entities:
+        entity.adjustments = format_adjustments(entity.adjustments.copy())
+        entity.addon_all = rename_addon_columns(entity.addon_all, entity.name)
 
     # --- 2.4 PUG / PMF mapping data-quality checks ------------------------------
     pug_dupes = src_pug.duplicated(subset=[MANAGED_SEGMENT_L4_DESCR], keep=False)
@@ -500,106 +543,93 @@ def main():  # pylint: disable=too-many-statements
     if pmf_dupes.sum() > 0:
         warnings.warn(f"PMF RWA mapping has {pmf_dupes.sum()} duplicates on PMF L5")
 
-    # --- 2.5 Concatenate adjustments + outlook + addon --------------------------
-    cg_concat = pd.concat([
-        cg_adjustments_formatted,
-        cg_outlook,
-        addon_all_cg,
-    ], ignore_index=True).copy()
+    # Descriptive upload-template quarter headers, derived from the quarter_map:
+    #   id 0   -> "RWA Actuals"  (the actuals bucket)
+    #   id > 0 -> "Mon YYYY"     (e.g. "Jun 2025")
+    quarter_labels = {
+        qid: (UPLOAD_ACTUALS_LABEL if qid == 0 else quarter_label(year, month))
+        for qid, (year, month) in quarter_map.items()
+    }
+    quarter_ids = sorted(quarter_map.keys())
+    # Value columns build_frm_control sums: actuals first, then projected quarters.
+    frm_control_value_cols = [UPLOAD_ACTUALS_LABEL] + [
+        quarter_labels[q] for q in quarter_ids if q != 0
+    ]
 
-    cbna_concat = pd.concat([
-        cbna_adjustments_formatted,
-        cbna_outlook,
-        addon_all_cbna,
-    ], ignore_index=True).copy()
+    # --- 2.5–2.13 Per-entity stage-2 transforms ---------------------------------
+    for entity in entities:
+        # 2.5 Concatenate adjustments + outlook + addon
+        concat = pd.concat([
+            entity.adjustments,
+            entity.outlook,
+            entity.addon_all,
+        ], ignore_index=True).copy()
 
-    cg_concat[QUARTER_ID]   = pd.to_numeric(cg_concat[QUARTER_ID], errors='coerce')
-    cbna_concat[QUARTER_ID] = pd.to_numeric(cbna_concat[QUARTER_ID], errors='coerce')
+        concat[QUARTER_ID] = pd.to_numeric(concat[QUARTER_ID], errors='coerce')
+        concat = concat[concat[QUARTER_ID] != 'Unknown']
+        concat = concat[concat[QUARTER_ID].notna()]
+        print(f"{entity.name} after filtering unknowns:   {len(concat)}")
 
-    cg_concat   = cg_concat[cg_concat[QUARTER_ID] != 'Unknown']
-    cbna_concat = cbna_concat[cbna_concat[QUARTER_ID] != 'Unknown']
+        # 2.6 Save raw data (before further transforms)
+        concat["Entity"] = entity.raw_entity_code
+        entity.raw_data = concat.copy()
 
-    cg_concat   = cg_concat[cg_concat[QUARTER_ID].notna()]
-    cbna_concat = cbna_concat[cbna_concat[QUARTER_ID].notna()]
+        # 2.7 Legacy franchises breakout / 2.8 FRM output
+        entity.frm_output = legacy_franchises_breakout(concat)
 
-    print(f"CG after filtering unknowns:   {len(cg_concat)}")
-    print(f"CBNA after filtering unknowns: {len(cbna_concat)}")
-
-    # --- 2.6 Save raw data (before further transforms) --------------------------
-    cg_concat["Entity"]   = "BA"
-    cbna_concat["Entity"] = "BB"
-
-    cg_raw_data   = cg_concat.copy()
-    cbna_raw_data = cbna_concat.copy()
-
-    # --- 2.7 Legacy franchises breakout -----------------------------------------
-    cg_concat   = legacy_franchises_breakout(cg_concat)
-    cbna_concat = legacy_franchises_breakout(cbna_concat)
-
-    # --- 2.8 FRM output ---------------------------------------------------------
-    frm_output_cg   = cg_concat.copy()
-    frm_output_cbna = cbna_concat.copy()
-
-    # --- 2.9 Join PUG mapping ---------------------------------------------------
-    pre_cg   = len(frm_output_cg)
-    pre_cbna = len(frm_output_cbna)
-
-    frm_output_cg = frm_output_cg.merge(
-        pug_df[[MANAGED_SEGMENT_L4_DESCR, "PUG"]], how="left", on=MANAGED_SEGMENT_L4_DESCR,
-    )
-    frm_output_cbna = frm_output_cbna.merge(
-        pug_df[[MANAGED_SEGMENT_L4_DESCR, "PUG"]], how="left", on=MANAGED_SEGMENT_L4_DESCR,
-    )
-
-    if len(frm_output_cg) != pre_cg:
-        warnings.warn(f"CG: PUG join caused row expansion: {pre_cg} -> {len(frm_output_cg)}")
-    if len(frm_output_cbna) != pre_cbna:
-        warnings.warn(f"CBNA: PUG join caused row expansion: {pre_cbna} -> {len(frm_output_cbna)}")
-
-    for label, df in [("CG", frm_output_cg), ("CBNA", frm_output_cbna)]:
-        unmatched = df[df["PUG"].isna()]
-        pct = len(unmatched) / (len(df) + 1) * 100
+        # 2.9 Join PUG mapping
+        pre = len(entity.frm_output)
+        entity.frm_output = entity.frm_output.merge(
+            pug_df[[MANAGED_SEGMENT_L4_DESCR, "PUG"]], how="left",
+            on=MANAGED_SEGMENT_L4_DESCR,
+        )
+        if len(entity.frm_output) != pre:
+            warnings.warn(
+                f"{entity.name}: PUG join caused row expansion: "
+                f"{pre} -> {len(entity.frm_output)}"
+            )
+        unmatched = entity.frm_output[entity.frm_output["PUG"].isna()]
+        pct = len(unmatched) / (len(entity.frm_output) + 1) * 100
         if len(unmatched) > 0:
             warnings.warn(
-                f"{label}: (unmatched: {pct:.1f}%) rows "
+                f"{entity.name}: (unmatched: {pct:.1f}%) rows "
                 f"({len(unmatched):,}) have no PUG mapping match!"
             )
 
-    # --- 2.10 Join PMF mapping --------------------------------------------------
-    pre_cg   = len(frm_output_cg)
-    pre_cbna = len(frm_output_cbna)
-
-    frm_output_cg = frm_output_cg.merge(
-        rwa_pmf_mapping[[PMF_ACCOUNT_L5_DESCR, SA_ACCOUNT_NUM, AA_ACCOUNT_NUM]],
-        how="left", on=PMF_ACCOUNT_L5_DESCR,
-    )
-    frm_output_cbna = frm_output_cbna.merge(
-        rwa_pmf_mapping[[PMF_ACCOUNT_L5_DESCR, SA_ACCOUNT_NUM, AA_ACCOUNT_NUM]],
-        how="left", on=PMF_ACCOUNT_L5_DESCR,
-    )
-
-    if len(frm_output_cg) != pre_cg:
-        warnings.warn(f"CG: PMF join caused row expansion: {pre_cg} -> {len(frm_output_cg)}")
-    if len(frm_output_cbna) != pre_cbna:
-        warnings.warn(f"CBNA: PMF join caused row expansion: {pre_cbna} -> {len(frm_output_cbna)}")
-
-    for label, df in [("CG", frm_output_cg), ("CBNA", frm_output_cbna)]:
-        unmatched = df[df[SA_ACCOUNT_NUM].isna() & df[PMF_ACCOUNT_L5_DESCR].notna()]
-        pct = len(unmatched) / (len(df) + 1) * 100
+        # 2.10 Join PMF mapping
+        pre = len(entity.frm_output)
+        entity.frm_output = entity.frm_output.merge(
+            rwa_pmf_mapping[[PMF_ACCOUNT_L5_DESCR, SA_ACCOUNT_NUM, AA_ACCOUNT_NUM]],
+            how="left", on=PMF_ACCOUNT_L5_DESCR,
+        )
+        if len(entity.frm_output) != pre:
+            warnings.warn(
+                f"{entity.name}: PMF join caused row expansion: "
+                f"{pre} -> {len(entity.frm_output)}"
+            )
+        unmatched = entity.frm_output[
+            entity.frm_output[SA_ACCOUNT_NUM].isna()
+            & entity.frm_output[PMF_ACCOUNT_L5_DESCR].notna()
+        ]
+        pct = len(unmatched) / (len(entity.frm_output) + 1) * 100
         if len(unmatched) > 0:
             warnings.warn(
-                f"{label}: PMF RWA mapping has {len(unmatched):,} ({pct:.1f}%) rows with no match!"
+                f"{entity.name}: PMF RWA mapping has {len(unmatched):,} "
+                f"({pct:.1f}%) rows with no match!"
             )
 
-    # --- 2.10b DQ checks (before format_columns_before_pivots so join-miss nulls are real NaN) ---
+    cg, cbna = entities
+
+    # --- 2.10b DQ checks (cross-entity; before format_columns_before_pivots so
+    # join-miss nulls are still real NaN) ---------------------------------------
     dq_results = run_all_checks(
         convergence=convergence,
-        cg_outlook=cg_outlook,
-        cbna_outlook=cbna_outlook,
-        cg_adjustments=cg_adjustments,
-        cbna_adjustments=cbna_adjustments,
-        frm_output_cg=frm_output_cg,
-        frm_output_cbna=frm_output_cbna,
+        cg_outlook=cg.outlook,
+        cbna_outlook=cbna.outlook,
+        cg_adjustments=cg.adjustments,
+        cbna_adjustments=cbna.adjustments,
+        frm_output_cg=cg.frm_output,
+        frm_output_cbna=cbna.frm_output,
         n_keys=n_keys,
     )
     dq_parquet_path, dq_xlsx_path = export_dq_results(dq_results, output_dir)
@@ -613,37 +643,30 @@ def main():  # pylint: disable=too-many-statements
         f"{n_fail} FAIL, {n_warn} WARN, {n_pass} PASS"
     )
 
-    # --- 2.11 Format columns before pivots --------------------------------------
-    frm_output_cg   = format_columns_before_pivots(frm_output_cg.copy())
-    frm_output_cbna = format_columns_before_pivots(frm_output_cbna.copy())
+    # --- 2.11–2.13 Format columns, pivot, format upload template, export --------
+    upload_paths = {
+        "CG": (output_cg_upload_full_filename_path, output_cg_raw_data_filename_path),
+        "CBNA": (output_cbna_upload_full_filename_path, output_cbna_raw_data_filename_path),
+    }
+    for entity in entities:
+        # 2.11 Format columns before pivots
+        entity.frm_output = format_columns_before_pivots(entity.frm_output.copy())
 
-    # --- 2.12 Upload template pivots (ERBA / AA / SA) + markets filter -----------
-    cg_frm_output   = create_upload_template_pivots(frm_output_cg)
-    cbna_frm_output = create_upload_template_pivots(frm_output_cbna)
+        # 2.12 Upload template pivots (ERBA / AA / SA) + markets filter (inert,
+        # applied after pivots to mirror production ordering).
+        pivoted = create_upload_template_pivots(entity.frm_output, quarter_ids)
+        pivoted = create_markets_filter(pivoted)
+        print(f"{entity.name} pivot rows:   {len(pivoted):,}")
 
-    # Markets filter (inert) — applied after pivots to mirror production ordering.
-    cg_frm_output   = create_markets_filter(cg_frm_output)
-    cbna_frm_output = create_markets_filter(cbna_frm_output)
+        # 2.13 Format upload template
+        entity.upload_template = format_upload_template(pivoted, quarter_labels)
+        print(f"{entity.name} Upload template rows:   {len(entity.upload_template):,}")
 
-    print(f"CG pivot rows:   {len(cg_frm_output):,}")
-    print(f"CBNA pivot rows: {len(cbna_frm_output):,}")
-
-    # --- 2.13 Format upload template + export upload/raw-data --------------------
-    cg_frm_output_full   = format_upload_template(cg_frm_output)
-    cbna_frm_output_full = format_upload_template(cbna_frm_output)
-
-    print(f"CG Upload template rows:   {len(cg_frm_output_full):,}")
-    print(f"CBNA Upload template rows: {len(cbna_frm_output_full):,}")
-
-    cg_frm_output_full.to_excel(output_cg_upload_full_filename_path, index=False)
-    cbna_frm_output_full.to_excel(output_cbna_upload_full_filename_path, index=False)
-    cg_raw_data.to_excel(output_cg_raw_data_filename_path, index=False)
-    cbna_raw_data.to_excel(output_cbna_raw_data_filename_path, index=False)
-
-    print(f"Exported: {output_cg_upload_full_filename_path}")
-    print(f"Exported: {output_cbna_upload_full_filename_path}")
-    print(f"Exported: {output_cg_raw_data_filename_path}")
-    print(f"Exported: {output_cbna_raw_data_filename_path}")
+        upload_path, raw_path = upload_paths[entity.name]
+        entity.upload_template.to_excel(upload_path, index=False)
+        entity.raw_data.to_excel(raw_path, index=False)
+        print(f"Exported: {upload_path}")
+        print(f"Exported: {raw_path}")
 
     # --- 2.14 Build controls ----------------------------------------------------
     cg_convergence_control = build_convergence_control(
@@ -653,11 +676,11 @@ def main():  # pylint: disable=too-many-statements
         convergence, REPORTABLE_ENTITY_IS_CBNA, ADV_CBNA_TOTAL_RWA_AMT,
     )
 
-    cg_frm_control   = build_frm_control(cg_frm_output_full)
-    cbna_frm_control = build_frm_control(cbna_frm_output_full)
+    cg_frm_control   = build_frm_control(cg.upload_template, frm_control_value_cols)
+    cbna_frm_control = build_frm_control(cbna.upload_template, frm_control_value_cols)
 
-    cg_raw_data_control   = build_raw_data_control(cg_raw_data)
-    cbna_raw_data_control = build_raw_data_control(cbna_raw_data)
+    cg_raw_data_control   = build_raw_data_control(cg.raw_data)
+    cbna_raw_data_control = build_raw_data_control(cbna.raw_data)
 
     # --- 2.15 Parameters summary ------------------------------------------------
     param_data = [
@@ -697,6 +720,14 @@ def main():  # pylint: disable=too-many-statements
         param_df.to_excel(writer, sheet_name="Parameters")
 
     print(f"Exported: {output_control_file_path}")
+
+    # --- 2.17 Tidy long-format export (Tableau-friendly) ------------------------
+    # One row per (Entity, Reporting Layer, Segment L2/L3/L4, PMF L5, RWA Calc,
+    # Period, RWA Amount). Additive only — does not touch the upload templates.
+    rwa_long = _build_rwa_long(entities, quarter_labels)
+    rwa_long_path = output_dir / "rwa_long.parquet"
+    rwa_long.to_parquet(rwa_long_path, index=False)
+    print(f"Exported: {rwa_long_path}")
 
     # =============================================================================
     # Summary

@@ -16,8 +16,6 @@ from .constants import (
     AA_ACCOUNT_NUM,
     AA_RWA,
     AA_RWF,
-    ADV_CBNA_TOTAL_RWA_AMT,
-    ADV_CG_TOTAL_RWA_AMT,
     DISCONTINUED_OPS_L2,
     ERBA_RWA,
     FINANCE_PMF_LEVEL_5_DESC,
@@ -54,8 +52,6 @@ from .constants import (
     SA_RWA,
     SA_RWA_AMT,
     SA_RWF,
-    UPLOAD_TEMPLATE_COL_ORDER,
-    UPLOAD_TEMPLATE_MONTH_STUBS,
 )
 from .transforms import (
     BALANCE_SHEET_MONTH_COLS,
@@ -63,6 +59,7 @@ from .transforms import (
     DEFAULT_SA_ACCOUNT,
     MONTH_COL_ORDER,
     UPLOAD_STUB_DEFAULTS,
+    build_upload_col_order,
 )
 
 
@@ -135,10 +132,7 @@ def assign_quarter_id(outlook_df, quarter_id_mapping):
     )
 
 
-def assign_year_month_from_quarter(
-        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
-        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
-        quarter_map):
+def assign_year_month_from_quarter(addon_dfs, quarter_map):
     """Derive YEAR and Month from Quarter Id — the inverse of assign_quarter_id.
 
     Used after the add-on pivot, where the descriptor rows survive via the pivot
@@ -147,14 +141,8 @@ def assign_year_month_from_quarter(
     matching the pre-pivot behaviour for unparseable Projected Quarters.
 
     Args:
-        cg_addon_markets_credit_risk: CG Markets credit-risk add-on DataFrame;
-            modified in place.
-        cbna_addon_markets_credit_risk: CBNA Markets credit-risk add-on DataFrame;
-            modified in place.
-        non_credit_risk_non_waterfall_cg: CG non-waterfall non-credit-risk DataFrame;
-            modified in place.
-        non_credit_risk_non_waterfall_cbna: CBNA non-waterfall non-credit-risk DataFrame;
-            modified in place.
+        addon_dfs: Mapping of {label: DataFrame} (or an iterable of DataFrames)
+            for the add-on frames to annotate; each frame is modified in place.
         quarter_map: Dict mapping quarter number to (year, month_abbr) tuple, as
             returned by build_quarter_mappings.
 
@@ -162,15 +150,12 @@ def assign_year_month_from_quarter(
         Exception: Re-raises any exception after emitting a warning, so callers
             see the original error.
     """
+    if not isinstance(addon_dfs, dict):
+        addon_dfs = {f"addon_{i}": df for i, df in enumerate(addon_dfs)}
     try:
         year_map = {int(k): v[0] for k, v in quarter_map.items()}
         month_map = {int(k): v[1] for k, v in quarter_map.items()}
-        for name, df in {
-            'cg_addon_markets_credit_risk': cg_addon_markets_credit_risk,
-            'cbna_addon_markets_credit_risk': cbna_addon_markets_credit_risk,
-            'non_credit_risk_non_waterfall_cg': non_credit_risk_non_waterfall_cg,
-            'non_credit_risk_non_waterfall_cbna': non_credit_risk_non_waterfall_cbna
-        }.items():
+        for name, df in addon_dfs.items():
             q = pd.to_numeric(df[QRTR_ID], errors="coerce").astype("Int64")
 
             bad_vals = df.loc[q.isna() & df[QRTR_ID].notna(), QRTR_ID].drop_duplicates().to_list()
@@ -242,25 +227,19 @@ def calculate_aa_rwa(df):
     )
 
 
-def assign_erba_rwa_and_metadata(cg_outlook, cbna_outlook):
-    """Assign ERBA RWA and Comment columns to CG and CBNA outlook DataFrames.
+def assign_erba_rwa(outlook):
+    """Assign ERBA RWA and Comment columns to one entity's outlook DataFrame.
 
     ERBA RWA is set to SA RWA where QRTR_ID is 5 or 6 (int or string),
-    else NaN. Comment is set to empty string. Modifies DataFrames in place.
+    else NaN. Comment is set to empty string. Modifies the DataFrame in place.
 
     Args:
-        cg_outlook: CG outlook DataFrame; modified in place.
-        cbna_outlook: CBNA outlook DataFrame; modified in place.
+        outlook: Outlook DataFrame for one entity; modified in place.
     """
-    cg_outlook[ERBA_RWA] = cg_outlook[SA_RWA].where(
-        cg_outlook[QRTR_ID].isin([5, 6]) |
-        cg_outlook[QRTR_ID].isin(['5', '6']))
-    cbna_outlook[ERBA_RWA] = cbna_outlook[SA_RWA].where(
-        cbna_outlook[QRTR_ID].isin([5, 6]) |
-        cbna_outlook[QRTR_ID].isin(['5', '6']))
-    cg_outlook["Comment"] = ""
-
-    cbna_outlook["Comment"] = ""
+    outlook[ERBA_RWA] = outlook[SA_RWA].where(
+        outlook[QRTR_ID].isin([5, 6]) |
+        outlook[QRTR_ID].isin(['5', '6']))
+    outlook["Comment"] = ""
 
 
 
@@ -324,79 +303,59 @@ def split_convergence(convergence, pmf_accounts, markets_l2):
     )
 
 
-def build_markets_addon_pivot(
-        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
-        addon_pivot_index):
-    """Pivot (sum) the Markets credit-risk add-on for CG and CBNA.
+def build_markets_addon_pivot(addon_markets_credit_risk, adv_rwa_col, addon_pivot_index):
+    """Pivot (sum) the Markets credit-risk add-on for one entity.
 
     Collapses the raw convergence rows to one row per `addon_pivot_index`
     combination, summing the additive RWA amounts. Without this aggregation the
     add-on export carries one row per raw record (surplus rows).
 
     Args:
-        cg_addon_markets_credit_risk: CG Markets add-on DataFrame filtered from
-            convergence.
-        cbna_addon_markets_credit_risk: CBNA Markets add-on DataFrame filtered from
-            convergence.
+        addon_markets_credit_risk: Markets add-on DataFrame filtered from
+            convergence for one entity.
+        adv_rwa_col: Entity-specific advanced RWA column to sum alongside SA RWA.
         addon_pivot_index: List of column names to use as the pivot index.
 
     Returns:
-        Tuple of (pivoted_cg, pivoted_cbna) DataFrames with SA/AA RWA amounts
-        summed per index group.
+        Pivoted DataFrame with SA/AA RWA amounts summed per index group.
     """
-    pivoted_cg = cg_addon_markets_credit_risk.pivot_table(
-        values=[SA_RWA_AMT, ADV_CG_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
+    return addon_markets_credit_risk.pivot_table(
+        values=[SA_RWA_AMT, adv_rwa_col], index=addon_pivot_index, aggfunc="sum"
     ).reset_index()
-    pivoted_cbna = cbna_addon_markets_credit_risk.pivot_table(
-        values=[SA_RWA_AMT, ADV_CBNA_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
-    ).reset_index()
-    return pivoted_cg, pivoted_cbna
 
 
-def build_addon_pivot(
-        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna,
-        addon_pivot_index):
-    """Pivot (sum) the non-waterfall non-credit-risk add-on for CG and CBNA.
+def build_addon_pivot(non_credit_risk_non_waterfall, adv_rwa_col, addon_pivot_index):
+    """Pivot (sum) the non-waterfall non-credit-risk add-on for one entity.
 
     Fills null PMF L5 keys so those rows survive the pivot, sums the additive
     RWA amounts to one row per `addon_pivot_index` combination, then derives
     ERBA RWA (= SA RWA Amount in quarters 5/6) and a blank Comment.
 
     Args:
-        non_credit_risk_non_waterfall_cg: CG non-waterfall non-credit-risk DataFrame
-            filtered from convergence.
-        non_credit_risk_non_waterfall_cbna: CBNA non-waterfall non-credit-risk DataFrame
-            filtered from convergence.
+        non_credit_risk_non_waterfall: Non-waterfall non-credit-risk DataFrame
+            filtered from convergence for one entity.
+        adv_rwa_col: Entity-specific advanced RWA column to sum alongside SA RWA.
         addon_pivot_index: List of column names to use as the pivot index.
 
     Returns:
-        Tuple of (pivoted_cg, pivoted_cbna) DataFrames with ERBA RWA and Comment
-        columns set.
+        Pivoted DataFrame with ERBA RWA and Comment columns set.
     """
-    non_credit_risk_non_waterfall_cg = non_credit_risk_non_waterfall_cg.copy()
-    non_credit_risk_non_waterfall_cbna = non_credit_risk_non_waterfall_cbna.copy()
-    non_credit_risk_non_waterfall_cg[FINANCE_PMF_LEVEL_5_DESC] = (
-        non_credit_risk_non_waterfall_cg[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
-    )
-    non_credit_risk_non_waterfall_cbna[FINANCE_PMF_LEVEL_5_DESC] = (
-        non_credit_risk_non_waterfall_cbna[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
+    non_credit_risk_non_waterfall = non_credit_risk_non_waterfall.copy()
+    non_credit_risk_non_waterfall[FINANCE_PMF_LEVEL_5_DESC] = (
+        non_credit_risk_non_waterfall[FINANCE_PMF_LEVEL_5_DESC].fillna(0)
     )
 
-    pivoted_cg = non_credit_risk_non_waterfall_cg.pivot_table(
-        values=[SA_RWA_AMT, ADV_CG_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
-    ).reset_index()
-    pivoted_cbna = non_credit_risk_non_waterfall_cbna.pivot_table(
-        values=[SA_RWA_AMT, ADV_CBNA_TOTAL_RWA_AMT], index=addon_pivot_index, aggfunc="sum"
+    pivoted = non_credit_risk_non_waterfall.pivot_table(
+        values=[SA_RWA_AMT, adv_rwa_col], index=addon_pivot_index, aggfunc="sum"
     ).reset_index()
 
-    for pivoted in (pivoted_cg, pivoted_cbna):
-        # Quarter Id is a string here (assign_quarter_id), so the quarter 5/6 test
-        # uses strings rather than production's int literals.
-        pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(
-            pivoted[QRTR_ID].isin([5, 6]) |
-            pivoted[QRTR_ID].isin(['5', '6']))
-        pivoted["Comment"] = ""
-    return pivoted_cg, pivoted_cbna
+    # Quarter Id is a string here (assign_quarter_id), so the quarter 5/6 test
+    # uses strings rather than production's int literals.
+    pivoted[ERBA_RWA] = pivoted[SA_RWA_AMT].where(
+        pivoted[QRTR_ID].isin([5, 6]) |
+        pivoted[QRTR_ID].isin(['5', '6']))
+    pivoted["Comment"] = ""
+    return pivoted
 
 
 def create_key_pivots(crd_df, adv_rwa_col, key_defs):
@@ -837,14 +796,20 @@ def create_markets_filter(input_df):
     return input_df
 
 
-def create_upload_template_pivots(input_df):
+def create_upload_template_pivots(input_df, quarter_ids):
     """Create ERBA, AA, SA upload template pivots and concatenate.
 
     Creates three pivots — ERBA, AA, SA — each summed over QUARTER_ID as
-    columns. Sets RWA_CALC column value per pivot type.
+    columns. Sets RWA_CALC column value per pivot type. The quarter columns are
+    materialised for every id in `quarter_ids` (so absent quarters become 0) and
+    laid out as the projected quarters (ids > 0, ascending) followed by the
+    actuals bucket (id 0); they keep their integer ids here and are renamed to
+    descriptive labels later in format_upload_template.
 
     Args:
         input_df: DataFrame with all required columns for pivoting.
+        quarter_ids: Ordered list of integer quarter ids to materialise as
+            columns (from the quarter_map, e.g. [0, 1, ..., 7]).
 
     Returns:
         Concatenated DataFrame of ERBA, AA, SA pivots with RWA_CALC set.
@@ -874,6 +839,10 @@ def create_upload_template_pivots(input_df):
     # Filter pivot_index to columns that actually exist
     pivot_index = [c for c in pivot_index if c in input_df.columns]
 
+    # Projected quarters (id > 0) ascending, then the actuals bucket (id 0).
+    quarter_ids = sorted(quarter_ids)
+    quarter_col_order = [q for q in quarter_ids if q != 0] + [q for q in quarter_ids if q == 0]
+
     def make_pivot(values_col, rwa_label):
         """Build a single pivot table for one RWA calc type."""
         pivot = input_df.pivot_table(
@@ -883,10 +852,10 @@ def create_upload_template_pivots(input_df):
             aggfunc="sum",
             fill_value=0,
         ).reset_index()
-        for i in range(8):
-            if i not in pivot.columns:
-                pivot[i] = 0
-        pivot = pivot[pivot_index + [1, 2, 3, 4, 5, 6, 7, 0]]
+        for q in quarter_col_order:
+            if q not in pivot.columns:
+                pivot[q] = 0
+        pivot = pivot[pivot_index + quarter_col_order]
         pivot[RWA_CALC] = rwa_label
         return pivot
 
@@ -899,22 +868,27 @@ def create_upload_template_pivots(input_df):
     return pivots
 
 
-def format_upload_template(input_df):
+def format_upload_template(input_df, quarter_labels):
     """Add upload stub columns, derive the Account number, and reorder for upload.
 
     Adds the fixed upload stub columns, derives a single Account number from the
-    SA/AA account numbers per RWA Calc type (defaulting missing ones), adds the
-    month placeholder columns, drops the now-redundant SA/AA account columns and
-    reorders to the production upload layout.
+    SA/AA account numbers per RWA Calc type (defaulting missing ones), renames
+    the integer quarter columns to descriptive string headers (e.g. "Jun 2025")
+    and the actuals bucket (id 0) to "RWA Actuals", drops the now-redundant SA/AA
+    account columns, and reorders to the upload layout. No zero-filled "MonthN"
+    stub columns are emitted and every header cell is a string.
 
     Args:
         input_df: Concatenated pivot DataFrame from create_upload_template_pivots
             containing ERBA, AA, and SA rows with RWA_CALC, SA_ACCOUNT_NUM,
-            and AA_ACCOUNT_NUM columns.
+            AA_ACCOUNT_NUM, and integer quarter-id columns.
+        quarter_labels: Dict mapping integer quarter id -> descriptive column
+            header (e.g. {0: "RWA Actuals", 1: "Jun 2025", ...}), derived from
+            the quarter_map.
 
     Returns:
-        Formatted DataFrame in the production upload column order, with stub
-        columns filled and numeric columns zeroed where NaN.
+        Formatted DataFrame with 100%-string headers in the upload column order,
+        stub columns filled and numeric columns zeroed where NaN.
     """
     input_df = input_df.copy()
 
@@ -941,14 +915,18 @@ def format_upload_template(input_df):
         DEFAULT_SA_ACCOUNT, input_df["Account"],
     )
 
-    # Month placeholder columns (quarter-end values live in the integer columns)
-    for m in UPLOAD_TEMPLATE_MONTH_STUBS:
-        input_df[m] = 0
-
     input_df = input_df.drop(columns=[SA_ACCOUNT_NUM, AA_ACCOUNT_NUM])
-    input_df = input_df.rename(columns={0: "RWA Actuals"})
 
-    input_df = input_df[[c for c in UPLOAD_TEMPLATE_COL_ORDER if c in input_df.columns]]
+    # Rename integer quarter-id columns to descriptive string headers. Quarter id
+    # 0 becomes "RWA Actuals"; ids > 0 become "Mon YYYY" labels from quarter_map.
+    input_df = input_df.rename(columns=quarter_labels)
+
+    # Descriptive headers for the projected quarters, in id order (excluding 0).
+    quarter_header_order = [
+        quarter_labels[q] for q in sorted(quarter_labels) if q != 0
+    ]
+    col_order = build_upload_col_order(quarter_header_order)
+    input_df = input_df[[c for c in col_order if c in input_df.columns]]
     input_df = input_df.sort_values([MANAGED_SEGMENT_L2_DESCR, MANAGED_SEGMENT_L3_DESCR])
     return input_df
 
@@ -985,24 +963,27 @@ def build_convergence_control(convergence_df, entity_filter_col, adv_rwa_col):
     return ctrl
 
 
-def build_frm_control(frm_output_df):
+def build_frm_control(frm_output_df, quarter_value_cols):
     """Summarise the formatted upload template by L2 segment x RWA calc type.
 
-    Sums the quarter columns (1-7) and the actuals column, mapping the AA/SA
-    pivot labels to the canonical RWA names and dropping ERBA.
+    Sums the actuals column plus every projected-quarter value column, mapping
+    the AA/SA pivot labels to the canonical RWA names and dropping ERBA.
 
     Args:
-        frm_output_df: Formatted upload template DataFrame from format_upload_template
-            with RWA Actuals and integer quarter columns 1-7.
+        frm_output_df: Formatted upload template DataFrame from
+            format_upload_template, with the "RWA Actuals" column and the
+            descriptive quarter value columns.
+        quarter_value_cols: Ordered list of value columns to sum — the actuals
+            label first, then the descriptive projected-quarter headers
+            (e.g. ["RWA Actuals", "Jun 2025", ...]).
 
     Returns:
         Summary DataFrame grouped by L2 segment and RWA Calc, with ERBA rows
         excluded and RWA Calc values mapped to canonical AA/SA RWA names.
     """
+    agg_spec = {c: "sum" for c in quarter_value_cols if c in frm_output_df.columns}
     ctrl = frm_output_df.groupby([MANAGED_SEGMENT_L2_DESCR, RWA_CALC]).agg(
-        {"RWA Actuals": "sum", 1: "sum", 2: "sum", 3: "sum", 4: "sum",
-         5: "sum", 6: "sum", 7: "sum"}).reset_index()
-    ctrl = ctrl.rename(columns={"RWA Actuals": 0})
+        agg_spec).reset_index()
     ctrl[RWA_CALC] = ctrl[RWA_CALC].map({"AA": AA_RWA, "SA": SA_RWA})
     ctrl = ctrl[ctrl[RWA_CALC].isin([AA_RWA, SA_RWA])]
     return ctrl
@@ -1032,27 +1013,17 @@ def build_raw_data_control(raw_data_df):
 
 
 
-def concat_addon_all(
-        cg_addon_markets_credit_risk, cbna_addon_markets_credit_risk,
-        non_credit_risk_non_waterfall_cg, non_credit_risk_non_waterfall_cbna):
-    """Concatenate Markets and non-waterfall add-on frames for each entity.
+def concat_addon(addon_markets_credit_risk, non_credit_risk_non_waterfall):
+    """Concatenate the Markets and non-waterfall add-on frames for one entity.
 
     Args:
-        cg_addon_markets_credit_risk: Pivoted CG Markets credit-risk add-on DataFrame.
-        cbna_addon_markets_credit_risk: Pivoted CBNA Markets credit-risk add-on DataFrame.
-        non_credit_risk_non_waterfall_cg: Pivoted CG non-waterfall non-credit-risk DataFrame.
-        non_credit_risk_non_waterfall_cbna: Pivoted CBNA non-waterfall non-credit-risk DataFrame.
+        addon_markets_credit_risk: Pivoted Markets credit-risk add-on DataFrame.
+        non_credit_risk_non_waterfall: Pivoted non-waterfall non-credit-risk DataFrame.
 
     Returns:
-        Tuple of (cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa) DataFrames,
-        each combining Markets and non-waterfall rows for the respective entity.
+        DataFrame combining the Markets and non-waterfall rows for the entity.
     """
-    cg_addon_non_waterfall_rwa = pd.concat(
-        [cg_addon_markets_credit_risk, non_credit_risk_non_waterfall_cg],
+    return pd.concat(
+        [addon_markets_credit_risk, non_credit_risk_non_waterfall],
         ignore_index=True,
     )
-    cbna_addon_non_waterfall_rwa = pd.concat(
-        [cbna_addon_markets_credit_risk, non_credit_risk_non_waterfall_cbna],
-        ignore_index=True,
-    )
-    return cg_addon_non_waterfall_rwa, cbna_addon_non_waterfall_rwa

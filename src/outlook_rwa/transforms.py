@@ -76,3 +76,76 @@ UPLOAD_STUB_DEFAULTS: dict[str, str] = {
 # Fallback account codes when the PMF → account mapping is missing ('None').
 DEFAULT_SA_ACCOUNT = "663722"
 DEFAULT_AA_ACCOUNT = "664062"
+
+# ---------------------------------------------------------------------------
+# Upload-template column layout (data-driven; replaces UPLOAD_TEMPLATE_COL_ORDER)
+# ---------------------------------------------------------------------------
+# The upload template column order is composed from three groups so the layout
+# is data, not magic numbers:
+#   1. UPLOAD_DIMENSION_COLS  — leading identity / metadata columns
+#   2. UPLOAD_ACTUALS_LABEL + the dynamically-labelled quarter columns
+#      (derived from quarter_map, e.g. "Jun 2025")
+#   3. UPLOAD_TRAILING_COLS   — trailing metadata
+#
+# Header redesign (Phase 1 Track A): every header cell is a string, quarter
+# columns carry descriptive labels derived from the quarter_map, and the
+# zero-filled "MonthN" stub columns are dropped entirely.
+UPLOAD_DIMENSION_COLS: list[str] = [
+    "Reporting Layer",
+    "Managed Segment L2 Descr",
+    "Managed Segment L3 Descr",
+    "RWA Calc",
+    "PMF Account L5 Descr",
+    "FileType",
+    "Managed Segment L4 Descr",
+    "ManagedGeo",
+    "PUG",
+    "FrsBu",
+    "CustomerSegment",
+    "Product",
+    "Entity",
+    "Affiliate",
+    "Project",
+    "TransactionId",
+    "Account",
+    "BalanceType",
+    "Currency",
+    "Layer",
+    "ModelId",
+    "MDRM",
+    "ReasonCode",
+    "Comments",
+]
+UPLOAD_TRAILING_COLS: list[str] = [
+    "Comment",
+    "RWA Exposure Type",
+    "Markets Filter",
+]
+
+# Header for the actuals bucket (quarter id 0 in the upload pivot).
+UPLOAD_ACTUALS_LABEL = "RWA Actuals"
+
+
+def quarter_label(year: int, month_abbr: str) -> str:
+    """Descriptive quarter-column header, e.g. (2025, 'Jun') -> 'Jun 2025'."""
+    return f"{month_abbr} {year}"
+
+
+def build_upload_col_order(quarter_labels: list[str]) -> list[str]:
+    """Compose the upload-template column order from the three column groups.
+
+    Args:
+        quarter_labels: Ordered descriptive quarter headers (e.g.
+            ['Jun 2025', 'Sep 2025', ...]) derived from the quarter_map; does
+            NOT include the actuals bucket, which is inserted here.
+
+    Returns:
+        Full ordered list of upload-template column names — 100% strings, no
+        bare integers and no zero-filled stub columns.
+    """
+    return [
+        *UPLOAD_DIMENSION_COLS,
+        UPLOAD_ACTUALS_LABEL,
+        *quarter_labels,
+        *UPLOAD_TRAILING_COLS,
+    ]

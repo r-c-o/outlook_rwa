@@ -271,50 +271,8 @@ POLARS_PANDAS_DTYPE_COMPAT = {
 # ---------------------------------------------------------------------------
 # Upload-template layout (step2 final CG/CBNA templates)
 # ---------------------------------------------------------------------------
-
-# Month placeholder columns; quarter-end values live in the integer columns.
-UPLOAD_TEMPLATE_MONTH_STUBS = [
-    "Month1", "Month2", "Month4", "Month5", "Month7", "Month8",
-    "Month10", "Month11", "Month13", "Month14",
-]
-
-# Column order transcribed from the production upload template: RWA Actuals sits
-# near the front; the quarter value columns (1-7) are interleaved with the Month
-# placeholders; Comment / RWA Exposure Type / Markets Filter trail at the end.
-UPLOAD_TEMPLATE_COL_ORDER = [
-    REPORTING_LAYER,
-    MANAGED_SEGMENT_L2_DESCR,
-    MANAGED_SEGMENT_L3_DESCR,
-    RWA_CALC,
-    PMF_ACCOUNT_L5_DESCR,
-    "RWA Actuals",
-    "FileType",
-    MANAGED_SEGMENT_L4_DESCR,
-    "ManagedGeo",
-    "PUG",
-    "FrsBu",
-    "CustomerSegment",
-    "Product",
-    "Entity",
-    "Affiliate",
-    "Project",
-    "TransactionId",
-    "Account",
-    "BalanceType",
-    "Currency",
-    "Layer",
-    "ModelId",
-    "MDRM",
-    "ReasonCode",
-    "Comments",
-    1, "Month1", "Month2",
-    2, "Month4", "Month5",
-    3, "Month7", "Month8",
-    4, "Month10", "Month11",
-    5, "Month13", "Month14",
-    6,
-    7,
-    "Comment",
-    RWA_EXPOSURE_TYPE,
-    MARKETS_FILTER,
-]
+# The column order is now data-driven and lives in transforms.py
+# (UPLOAD_DIMENSION_COLS / UPLOAD_TRAILING_COLS / build_upload_col_order): the
+# quarter columns carry descriptive string labels derived from the quarter_map
+# and the zero-filled "MonthN" stub columns were removed entirely (Phase 1
+# Track A output-format redesign).
