@@ -1,0 +1,49 @@
+-- GENERATED FILE — do not edit by hand.
+-- Rendered from sql/templates/control_summary.sql.j2 by scripts/generate_sql.py.
+-- Business-rule values are injected from transforms.py / constants.py via SQLGlot.
+-- Re-run: python scripts/generate_sql.py  (or scripts/update.sh)
+
+-- control_summary: convergence SA/AA RWA totals by entity x L2 segment x quarter.
+-- Reproduces functions.build_convergence_control for both entities, emitted in
+-- tidy long format (one row per entity, segment_l2, rwa_calc, quarter_id):
+--   * filter to the entity (flag = 'Y');
+--   * exclude Discontinued Ops [L2];
+--   * GROUP BY L2 segment x quarter, SUM SA RWA Amount and the entity Adv RWA;
+--   * AA RWA = the entity's Adv. ... RWA column; SA RWA = SA RWA Amount.
+--
+-- This is the SQL pipeline's primary numeric equality oracle vs. the Python output.
+--
+-- "Managed Segment Level 2 Description" <> 'Discontinued Ops [L2]' injected from constants.DISCONTINUED_OPS_L2 via SQLGlot.
+CREATE OR REPLACE TABLE control_summary AS
+WITH base AS (
+    SELECT
+        'CG' AS entity,
+        "Managed Segment Level 2 Description" AS segment_l2,
+        "Quarter Id"                          AS quarter_id,
+        "SA RWA Amount"                       AS sa_rwa,
+        "Adv. CG Total RWA Amount with 1.06 Multiplier" AS aa_rwa
+    FROM convergence
+    WHERE "Reportable Entity is CG" = 'Y'
+      AND "Managed Segment Level 2 Description" <> 'Discontinued Ops [L2]'
+    UNION ALL
+    SELECT
+        'CBNA' AS entity,
+        "Managed Segment Level 2 Description" AS segment_l2,
+        "Quarter Id"                          AS quarter_id,
+        "SA RWA Amount"                       AS sa_rwa,
+        "Adv. CBNA Total RWA Amount with 1.06 Multiplier" AS aa_rwa
+    FROM convergence
+    WHERE "Reportable Entity is CBNA" = 'Y'
+      AND "Managed Segment Level 2 Description" <> 'Discontinued Ops [L2]'
+),
+grouped AS (
+    SELECT entity, segment_l2, quarter_id,
+           SUM(sa_rwa) AS sa_rwa, SUM(aa_rwa) AS aa_rwa
+    FROM base
+    GROUP BY entity, segment_l2, quarter_id
+)
+SELECT entity, segment_l2, 'SA RWA' AS rwa_calc, quarter_id, sa_rwa AS rwa_amount
+FROM grouped
+UNION ALL
+SELECT entity, segment_l2, 'AA RWA' AS rwa_calc, quarter_id, aa_rwa AS rwa_amount
+FROM grouped;

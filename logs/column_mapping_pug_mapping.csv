@@ -1,0 +1,7 @@
+original,oracle_name,dtype,oracle_type,max_observed_length
+Managed Segment L2 Descr,MANAGED_SEGMENT_L2_DESCR,str,VARCHAR2(24),14
+Managed Segment L3 Id,MANAGED_SEGMENT_L3_ID,int64,"NUMBER(18,0)",
+Managed Segment L3 Descr,MANAGED_SEGMENT_L3_DESCR,str,VARCHAR2(43),33
+Managed Segment L4 Id,MANAGED_SEGMENT_L4_ID,int64,"NUMBER(18,0)",
+Managed Segment L4 Descr,MANAGED_SEGMENT_L4_DESCR,str,VARCHAR2(37),27
+PUG,PUG,str,VARCHAR2(13),3

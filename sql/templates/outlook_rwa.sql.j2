@@ -1,0 +1,24 @@
+-- outlook_rwa: SA/AA RWA = balance * RWF, zeroed for non-credit-risk PMF accounts.
+-- Maps to functions.calculate_sa_rwa / calculate_aa_rwa:
+--   SA RWA = CASE WHEN pmf_l5 IN (non_credit_risk_pmf) THEN 0
+--                 ELSE balances * FINAL_SA_RWF END
+-- and the same for AA. ERBA RWA mirrors assign_erba_rwa_and_metadata:
+--   ERBA RWA = CASE WHEN quarter_id IN (5, 6) THEN SA RWA ELSE NULL END.
+--
+-- {{ non_credit_pmf_in }} injected from constants.NON_CREDIT_RISK_PMF (SQLGlot).
+-- {{ erba_quarters_in }} injected from the assign_erba_rwa_and_metadata quarters (5, 6).
+CREATE OR REPLACE TABLE outlook_rwa AS
+SELECT
+    entity, year, month, quarter_id,
+    seg_l4_desc, seg_l3_desc, seg_l2_desc, geo_l4_desc, geo_l3_desc, pmf_l5,
+    seg_l4_id, seg_l3_id, seg_l2_id,
+    balances, final_sa_rwf, final_aa_rwf,
+    CASE WHEN {{ non_credit_pmf_in }} THEN 0
+         ELSE balances * final_sa_rwf END AS sa_rwa,
+    CASE WHEN {{ non_credit_pmf_in }} THEN 0
+         ELSE balances * final_aa_rwf END AS aa_rwa,
+    CASE WHEN {{ erba_quarters_in }}
+         THEN CASE WHEN {{ non_credit_pmf_in }} THEN 0
+                   ELSE balances * final_sa_rwf END
+         ELSE NULL END AS erba_rwa
+FROM outlook_with_rwf;
