@@ -1,0 +1,6 @@
+original,oracle_name,dtype,oracle_type,max_observed_length
+PMF L5,PMF_L5,str,VARCHAR2(51),41
+SA Account #,SA_ACCOUNT__,str,VARCHAR2(17),7
+SA Leaf Account Name,SA_LEAF_ACCOUNT_NAME,str,VARCHAR2(20),10
+AA Account #,AA_ACCOUNT__,str,VARCHAR2(17),7
+AA Leaf Account Name,AA_LEAF_ACCOUNT_NAME,str,VARCHAR2(20),10

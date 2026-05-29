@@ -8,3 +8,11 @@ openpyxl==3.1.2
 fastexcel==0.10.4
 pyarrow==15.0.0
 python-dateutil==2.8.2
+
+# SQL + Oracle pipeline (Track D)
+# duckdb: in-process SQL engine for the rendered sql/*.sql pipeline
+# sqlglot: AST-based SQL generation (injects transforms.py values, no string concat)
+# oracledb: python-oracledb thin mode for the optional Oracle load layer
+duckdb==1.5.3
+sqlglot==30.8.0
+oracledb==4.0.1

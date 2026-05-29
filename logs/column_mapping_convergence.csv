@@ -1,0 +1,30 @@
+original,oracle_name,dtype,oracle_type,max_observed_length
+CCAR Cycle,CCAR_CYCLE,str,VARCHAR2(21),11
+Scope,SCOPE,str,VARCHAR2(20),10
+Managed Segment Level 1 Code,MANAGED_SEGMENT_LEVEL_1_CODE,int64,"NUMBER(18,0)",
+Managed Segment Level 2 Code,MANAGED_SEGMENT_LEVEL_2_CODE,int64,"NUMBER(18,0)",
+Managed Segment Level 3 Code,MANAGED_SEGMENT_LEVEL_3_CODE,int64,"NUMBER(18,0)",
+Managed Segment Level 4 Code,MANAGED_SEGMENT_LEVEL_4_CODE,int64,"NUMBER(18,0)",
+Version Number,VERSION_NUMBER,int64,"NUMBER(18,0)",
+Data Category,DATA_CATEGORY,str,VARCHAR2(18),8
+RWA Exposure Type Description,RWA_EXPOSURE_TYPE_DESCRIPTION,str,VARCHAR2(42),32
+Projected Quarter,PROJECTED_QUARTER,str,VARCHAR2(14),4
+Fiscal Year Accounting Period,FISCAL_YEAR_ACCOUNTING_PERIOD,int64,"NUMBER(18,0)",
+Scenario Id,SCENARIO_ID,str,VARCHAR2(12),2
+Scenario Name,SCENARIO_NAME,str,VARCHAR2(27),17
+Quarter Id,QUARTER_ID,int64,"NUMBER(18,0)",
+Error Flag,ERROR_FLAG,float64,FLOAT,
+Reportable Entity is CBNA,REPORTABLE_ENTITY_IS_CBNA,str,VARCHAR2(11),1
+Reportable Entity is CG,REPORTABLE_ENTITY_IS_CG,str,VARCHAR2(11),1
+GAAP Amount,GAAP_AMOUNT,float64,FLOAT,
+Adv. CG Total RWA Amount with 1.06 Multiplier,ADV__CG_TOTAL_RWA_AMOUNT_WITH_,float64,FLOAT,
+Adv. CBNA Total RWA Amount with 1.06 Multiplier,ADV__CBNA_TOTAL_RWA_AMOUNT_WIT,float64,FLOAT,
+SA RWA Amount,SA_RWA_AMOUNT,float64,FLOAT,
+Managed Segment Level 1 Description,MANAGED_SEGMENT_LEVEL_1_DESCRI,str,VARCHAR2(24),14
+Managed Segment Level 2 Description,MANAGED_SEGMENT_LEVEL_2_DESCRI,str,VARCHAR2(24),14
+Managed Segment Level 3 Description,MANAGED_SEGMENT_LEVEL_3_DESCRI,str,VARCHAR2(34),24
+Managed Geography Level 3 Description,MANAGED_GEOGRAPHY_LEVEL_3_DESC,str,VARCHAR2(45),35
+Managed Segment Level 4 Description,MANAGED_SEGMENT_LEVEL_4_DESCRI,str,VARCHAR2(37),27
+Managed Geography Level 4 Description,MANAGED_GEOGRAPHY_LEVEL_4_DESC,str,VARCHAR2(16),6
+Finance PMF Level 5 Description,FINANCE_PMF_LEVEL_5_DESCRIPTIO,str,VARCHAR2(51),41
+Comments,COMMENTS,float64,FLOAT,

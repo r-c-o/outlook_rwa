@@ -1,0 +1,4 @@
+original,oracle_name,dtype,oracle_type,max_observed_length
+quarter_id,QUARTER_ID,int64,"NUMBER(18,0)",
+year,YEAR,int64,"NUMBER(18,0)",
+month_abbr,MONTH_ABBR,str,VARCHAR2(13),3
